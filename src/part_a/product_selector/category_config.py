@@ -57,6 +57,31 @@ class CategoryConfig:
         )
 
     @classmethod
+    def from_category_name(cls, category: str) -> CategoryConfig:
+        """Create a generic config from a category name.
+
+        Uses sensible defaults for keywords and thresholds.
+        For fine-tuned settings, use a YAML config file instead.
+
+        Args:
+            category: Category name (e.g., "식기세척기").
+
+        Returns:
+            CategoryConfig with the given category as search term.
+        """
+        return cls(
+            name=category,
+            search_terms=[category],
+            negative_keywords=["불만", "후회", "실망", "반품", "고장", "AS", "수리", "오류"],
+            positive_keywords=["추천", "만족", "최고", "잘샀다", "좋아요", "강추"],
+            price_range_min=0,
+            price_range_max=10_000_000,
+            max_product_age_months=18,
+            min_community_posts=20,
+            danawa_category_code="",
+        )
+
+    @classmethod
     def default_robot_vacuum(cls) -> CategoryConfig:
         """Return default config for robot vacuum category."""
         return cls(

@@ -20,12 +20,19 @@ logger = logging.getLogger(__name__)
 
 
 class NaverShoppingRankingScraper:
-    """Scraper for Naver Shopping best/popular product rankings.
+    """Fetches Naver Shopping rankings via the official Search API.
+
+    Uses the Naver Open API (openapi.naver.com/v1/search/shop.json)
+    which returns JSON and does not block bot requests.
+    Requires NAVER_DATALAB_CLIENT_ID / NAVER_DATALAB_CLIENT_SECRET
+    env vars (same credentials work for both DataLab and Search APIs).
 
     Usage:
         with NaverShoppingRankingScraper() as scraper:
             results = scraper.get_best_products("로봇청소기")
     """
+
+    API_URL = "https://openapi.naver.com/v1/search/shop.json"
 
     def __init__(self, config: Config | None = None) -> None:
         self.config = config or Config()
@@ -34,104 +41,74 @@ class NaverShoppingRankingScraper:
     def get_best_products(
         self, keyword: str, max_results: int = 20
     ) -> list[SalesRankingEntry]:
-        """Fetch Naver Shopping best/popular products for a keyword.
+        """Fetch Naver Shopping products for a keyword via Search API.
 
         Args:
             keyword: Category search term (e.g., "로봇청소기").
-            max_results: Maximum rankings to retrieve.
+            max_results: Maximum rankings to retrieve (max 100).
 
         Returns:
             List of SalesRankingEntry with platform="naver".
         """
-        url = f"{self.config.naver_shopping_base_url}/search/all"
+        client_id = self.config.naver_datalab_client_id
+        client_secret = self.config.naver_datalab_client_secret
+
+        if not client_id or not client_secret:
+            logger.warning(
+                "Naver API credentials not configured "
+                "(NAVER_DATALAB_CLIENT_ID / NAVER_DATALAB_CLIENT_SECRET). "
+                "Skipping Naver Shopping."
+            )
+            return []
+
         params = {
             "query": keyword,
-            "sort": "rel",  # relevance (popularity-weighted)
+            "display": str(min(max_results, 100)),
+            "sort": "sim",  # relevance (popularity-weighted)
         }
-        cache_key = f"naver_shopping_best_{quote(keyword)}"
+        headers = {
+            "X-Naver-Client-Id": client_id,
+            "X-Naver-Client-Secret": client_secret,
+        }
+        cache_key = f"naver_shopping_api_{quote(keyword)}"
 
-        resp = self._client.get(url, params=params, cache_key=cache_key)
-        soup = BeautifulSoup(resp.text, "lxml")
-        return self._parse_search_results(soup, max_results)
-
-    def _parse_search_results(
-        self, soup: BeautifulSoup, max_results: int
-    ) -> list[SalesRankingEntry]:
-        """Parse Naver Shopping search result page."""
-        results: list[SalesRankingEntry] = []
-
-        # Current: div.product_item or li.basicList_item
-        # Legacy: div.goods_item
-        items = (
-            soup.select("div.product_item")
-            or soup.select("li.basicList_item")
-            or soup.select("div.goods_item")
+        resp = self._client.get(
+            self.API_URL, params=params, headers=headers, cache_key=cache_key
         )
+        data = resp.json()
+        return self._parse_api_response(data, max_results)
+
+    def _parse_api_response(
+        self, data: dict, max_results: int
+    ) -> list[SalesRankingEntry]:
+        """Parse Naver Shopping Search API JSON response."""
+        results: list[SalesRankingEntry] = []
+        items = data.get("items", [])
 
         for rank, item in enumerate(items[:max_results], start=1):
-            entry = self._parse_product_item(item, rank)
-            if entry:
-                results.append(entry)
-
-        logger.info("Naver Shopping: found %d ranked products", len(results))
-        return results
-
-    def _parse_product_item(
-        self, item: BeautifulSoup, rank: int
-    ) -> SalesRankingEntry | None:
-        """Parse a single Naver Shopping product card."""
-        try:
-            # Product name
-            name_el = (
-                item.select_one(".product_title, .basicList_title")
-                or item.select_one("a.basicList_link__JLQJf")
-                or item.select_one(".tit")
-            )
-            name = name_el.get_text(strip=True) if name_el else ""
+            # Strip HTML tags from title (API returns <b>bold</b> highlights)
+            raw_title = item.get("title", "")
+            name = re.sub(r"<[^>]+>", "", raw_title).strip()
             if not name:
-                return None
+                continue
 
-            # Brand
-            brand_el = (
-                item.select_one(".product_mall, .basicList_mall")
-                or item.select_one(".mall_title")
+            brand = item.get("brand", "") or item.get("maker", "")
+            lprice = item.get("lprice", "0")
+            product_id = item.get("productId", "")
+
+            results.append(
+                SalesRankingEntry(
+                    product_name=name,
+                    brand=brand,
+                    platform="naver",
+                    rank=rank,
+                    price=int(lprice) if lprice else 0,
+                    product_code=str(product_id),
+                )
             )
-            brand = brand_el.get_text(strip=True) if brand_el else ""
 
-            # Price
-            price_el = (
-                item.select_one(".product_price strong, .basicList_price")
-                or item.select_one(".price .num")
-            )
-            price_text = price_el.get_text(strip=True) if price_el else "0"
-            price = _parse_price(price_text)
-
-            # Review count
-            review_el = (
-                item.select_one(".product_etc .etc_count")
-                or item.select_one(".basicList_etc .etc_count")
-                or item.select_one(".review_count")
-            )
-            review_text = review_el.get_text(strip=True) if review_el else "0"
-            review_count = _parse_count(review_text)
-
-            # Rating
-            rating_el = item.select_one(".product_grade, .basicList_grade")
-            rating_text = rating_el.get_text(strip=True) if rating_el else "0"
-            rating = _parse_rating(rating_text)
-
-            return SalesRankingEntry(
-                product_name=name,
-                brand=brand,
-                platform="naver",
-                rank=rank,
-                review_count=review_count,
-                rating=rating,
-                price=price,
-            )
-        except Exception:
-            logger.debug("Failed to parse Naver Shopping item at rank %d", rank, exc_info=True)
-            return None
+        logger.info("Naver Shopping API: found %d ranked products", len(results))
+        return results
 
     def close(self) -> None:
         self._client.close()
@@ -294,8 +271,13 @@ class CoupangRankingScraper:
             "sorter": "salesCount",  # sort by sales
         }
         cache_key = f"coupang_best_{quote(keyword)}"
+        headers = {
+            "Referer": "https://www.coupang.com/",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+        }
 
-        resp = self._client.get(url, params=params, cache_key=cache_key)
+        resp = self._client.get(url, params=params, headers=headers, cache_key=cache_key)
         soup = BeautifulSoup(resp.text, "lxml")
         return self._parse_search_results(soup, max_results)
 

@@ -344,19 +344,65 @@ class TestParsingHelpers:
 
 
 class TestNaverShoppingRankingScraper:
-    def test_parse_search_results(self, temp_db):
-        html = (FIXTURES_DIR / "naver_shopping_search.html").read_text(encoding="utf-8")
+    def test_parse_api_response(self, temp_db):
+        """Test parsing of Naver Shopping Search API JSON response."""
+        api_json = {
+            "lastBuildDate": "Fri, 07 Feb 2026 18:00:00 +0900",
+            "total": 5,
+            "start": 1,
+            "display": 5,
+            "items": [
+                {
+                    "title": "로보락 <b>S8</b> MaxV Ultra",
+                    "lprice": "1490000",
+                    "hprice": "1600000",
+                    "productId": "12345",
+                    "brand": "로보락",
+                    "maker": "Roborock",
+                    "mallName": "네이버",
+                    "category1": "가전",
+                    "category2": "생활가전",
+                },
+                {
+                    "title": "삼성 비스포크 제트봇 AI",
+                    "lprice": "1200000",
+                    "productId": "12346",
+                    "brand": "삼성전자",
+                },
+                {
+                    "title": "LG 코드제로 R9",
+                    "lprice": "890000",
+                    "productId": "12347",
+                    "brand": "LG전자",
+                },
+            ],
+        }
         scraper = NaverShoppingRankingScraper(temp_db)
+        # Set API keys so scraper doesn't skip
+        scraper.config.naver_datalab_client_id = "test_id"
+        scraper.config.naver_datalab_client_secret = "test_secret"
         mock_resp = MagicMock()
-        mock_resp.text = html
+        mock_resp.json.return_value = api_json
         scraper._client.get = MagicMock(return_value=mock_resp)
 
         results = scraper.get_best_products("로봇청소기")
-        assert len(results) == 5
+        assert len(results) == 3
         assert all(r.platform == "naver" for r in results)
         assert results[0].rank == 1
         assert results[0].price == 1490000
-        assert results[0].review_count == 2847
+        # HTML tags should be stripped from title
+        assert "<b>" not in results[0].product_name
+        assert "S8" in results[0].product_name
+        assert results[0].brand == "로보락"
+        assert results[0].product_code == "12345"
+
+    def test_skip_without_api_keys(self, temp_db):
+        """Returns empty list when API keys are not configured."""
+        scraper = NaverShoppingRankingScraper(temp_db)
+        scraper.config.naver_datalab_client_id = ""
+        scraper.config.naver_datalab_client_secret = ""
+        results = scraper.get_best_products("로봇청소기")
+        assert results == []
 
 
 class TestDanawaRankingScraper:

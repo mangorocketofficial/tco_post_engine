@@ -73,18 +73,19 @@ class SentimentScraper:
         negative_count = 0
         positive_count = 0
         total_count = 0
+        short_name = self._shorten_name(product_name)
 
         for source_name, source_config in self.SOURCES.items():
             # Count negative posts
             for kw in negative_keywords:
-                query = f"{product_name} {kw}"
+                query = f"{short_name} {kw}"
                 count = self._search_count(source_name, source_config, query)
                 negative_count += count
                 total_count += count
 
             # Count positive posts
             for kw in positive_keywords:
-                query = f"{product_name} {kw}"
+                query = f"{short_name} {kw}"
                 count = self._search_count(source_name, source_config, query)
                 positive_count += count
                 total_count += count
@@ -95,6 +96,22 @@ class SentimentScraper:
             negative_posts=negative_count,
             positive_posts=positive_count,
         )
+
+    @staticmethod
+    def _shorten_name(name: str) -> str:
+        """Shorten a long product name to a concise search query.
+
+        Naver API returns verbose titles like:
+        "LG 식기세척기12인용 오브제컬렉션 엘지식기세척기 빌트인 베이지(25년형)"
+
+        This extracts the first 4 meaningful tokens to keep search URLs short.
+        """
+        # Remove parenthetical suffixes like (25년형), [무료설치]
+        cleaned = re.sub(r"[\(\[（].+?[\)\]）]", "", name).strip()
+        tokens = cleaned.split()
+        # Take first 4 tokens (usually brand + model)
+        short = " ".join(tokens[:4])
+        return short if short else name
 
     def get_sentiment_batch(
         self,

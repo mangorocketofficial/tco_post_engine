@@ -100,6 +100,18 @@ class HTTPClient:
 
             except requests.RequestException as exc:
                 last_exc = exc
+
+                # Don't retry on 4xx client errors (except 429 rate limit)
+                # — these are permanent failures, retrying won't help
+                if (
+                    isinstance(exc, requests.HTTPError)
+                    and exc.response is not None
+                    and 400 <= exc.response.status_code < 500
+                    and exc.response.status_code != 429
+                ):
+                    logger.warning("Request failed (4xx, no retry): %s", exc)
+                    raise
+
                 wait_time = self.BACKOFF_BASE ** attempt
                 logger.warning(
                     "Request failed (attempt %d/%d): %s — retrying in %.1fs",

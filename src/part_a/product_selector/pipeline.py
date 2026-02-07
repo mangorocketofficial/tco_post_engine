@@ -79,10 +79,13 @@ class ProductSelectionPipeline:
 
         # Step 2: Aggregate into candidate pool
         logger.info("Step 2: Aggregating candidates...")
+        active_sources = sum(1 for src in (naver, danawa, coupang) if src)
+        min_presence = min(2, active_sources)  # need ≥2 platforms, but relax if only 1 source
         aggregator = CandidateAggregator()
         candidates = aggregator.aggregate(
             naver, danawa, coupang,
             category=keyword,
+            min_presence=min_presence,
         )
         logger.info("Candidate pool: %d products", len(candidates))
 
@@ -92,21 +95,21 @@ class ProductSelectionPipeline:
                 "Try broader search terms or lower min_presence."
             )
 
-        # Step 3: Collect search interest
-        logger.info("Step 3: Collecting search interest...")
-        self._collect_search_interest(candidates)
-
-        # Step 4: Collect community sentiment
-        logger.info("Step 4: Collecting community sentiment...")
-        self._collect_sentiment(candidates)
-
-        # Step 5: Classify price tiers
-        logger.info("Step 5: Classifying price tiers...")
-        self._classify_prices(candidates)
-
-        # Step 6: Quick resale check
-        logger.info("Step 6: Running resale quick-check...")
-        self._check_resale(candidates)
+        # Steps 3-6: Enrichment (each step is optional — failures don't stop the pipeline)
+        for step_num, step_name, step_fn in [
+            (3, "search interest", self._collect_search_interest),
+            (4, "community sentiment", self._collect_sentiment),
+            (5, "price tiers", self._classify_prices),
+            (6, "resale quick-check", self._check_resale),
+        ]:
+            logger.info("Step %d: Collecting %s...", step_num, step_name)
+            try:
+                step_fn(candidates)
+            except Exception:
+                logger.warning(
+                    "Step %d (%s) failed, continuing without it",
+                    step_num, step_name, exc_info=True,
+                )
 
         # Step 7: Score candidates
         logger.info("Step 7: Scoring candidates...")
@@ -145,20 +148,46 @@ class ProductSelectionPipeline:
         return result
 
     def _collect_sales_rankings(self, keyword: str) -> tuple[list, list, list]:
-        """Collect from Naver, Danawa, Coupang."""
-        with NaverShoppingRankingScraper(self.config) as scraper:
-            naver = scraper.get_best_products(keyword)
+        """Collect from Naver, Danawa, Coupang.
 
+        Each scraper failure is caught gracefully — the pipeline
+        continues with whichever sources succeed.
+        """
+        # Naver Shopping (API)
+        try:
+            with NaverShoppingRankingScraper(self.config) as scraper:
+                naver = scraper.get_best_products(keyword)
+        except Exception:
+            logger.warning("Naver Shopping scraper failed, continuing without it", exc_info=True)
+            naver = []
+
+        # Danawa
         danawa_code = self.category_config.danawa_category_code
         if danawa_code:
-            with DanawaRankingScraper(self.config) as scraper:
-                danawa = scraper.get_popular_products(danawa_code)
+            try:
+                with DanawaRankingScraper(self.config) as scraper:
+                    danawa = scraper.get_popular_products(danawa_code)
+            except Exception:
+                logger.warning("Danawa scraper failed, continuing without it", exc_info=True)
+                danawa = []
         else:
             danawa = []
             logger.warning("No Danawa category code configured, skipping")
 
-        with CoupangRankingScraper(self.config) as scraper:
-            coupang = scraper.get_best_sellers(keyword)
+        # Coupang
+        try:
+            with CoupangRankingScraper(self.config) as scraper:
+                coupang = scraper.get_best_sellers(keyword)
+        except Exception:
+            logger.warning("Coupang scraper failed, continuing without it", exc_info=True)
+            coupang = []
+
+        total = len(naver) + len(danawa) + len(coupang)
+        if total == 0:
+            raise RuntimeError(
+                "All sales ranking scrapers failed. "
+                "Check API keys (NAVER_DATALAB_CLIENT_ID/SECRET) and network."
+            )
 
         return naver, danawa, coupang
 

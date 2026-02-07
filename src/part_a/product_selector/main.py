@@ -63,7 +63,7 @@ def main() -> None:
     if args.config:
         cat_config = CategoryConfig.from_yaml(args.config)
     else:
-        cat_config = CategoryConfig.default_robot_vacuum()
+        cat_config = CategoryConfig.from_category_name(args.category)
 
     # Run pipeline
     pipeline = ProductSelectionPipeline(cat_config, config)

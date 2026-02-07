@@ -48,12 +48,14 @@ class Config:
     # Coupang
     coupang_base_url: str = "https://www.coupang.com"
 
-    # Naver DataLab API
+    # Naver API (DataLab, Shopping Search, etc.)
     naver_datalab_client_id: str = field(
-        default_factory=lambda: os.getenv("NAVER_DATALAB_CLIENT_ID", "")
+        default_factory=lambda: os.getenv("NAVER_DATALAB_CLIENT_ID")
+        or os.getenv("NAVER_CLIENT_ID", "")
     )
     naver_datalab_client_secret: str = field(
-        default_factory=lambda: os.getenv("NAVER_DATALAB_CLIENT_SECRET", "")
+        default_factory=lambda: os.getenv("NAVER_DATALAB_CLIENT_SECRET")
+        or os.getenv("NAVER_CLIENT_SECRET", "")
     )
 
     def __post_init__(self) -> None:
