@@ -1,9 +1,14 @@
-# Part A: Data Engine
 """
-Data collection and processing modules:
-- price_tracker: Daily price scraping from Danawa/Coupang
-- resale_tracker: Resale transaction data from Danggeun/Bunjang
-- repair_analyzer: Community post extraction for repair costs
-- maintenance_calc: Maintenance time estimation
-- tco_engine: TCO calculation and JSON export
+Part A: Data Collection Engine
+
+Modules:
+- price_tracker: Track purchase prices from Danawa, Coupang, Naver Shopping
+- resale_tracker: Track resale values from Danggeun, Bunjang
+- repair_analyzer: Extract repair/AS data from community posts
+- maintenance_calc: Calculate maintenance time costs
+- tco_engine: TCO calculator and JSON export
+- database: SQLite storage layer
+- common: Shared utilities
 """
+
+__version__ = "0.1.0"

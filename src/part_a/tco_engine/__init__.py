@@ -1,1 +1,1 @@
-# TCO Engine — TCO calculator + JSON export API for Part B
+"""TCO Engine Module - Calculator and JSON export API."""

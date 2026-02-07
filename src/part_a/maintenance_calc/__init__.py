@@ -1,1 +1,1 @@
-# Maintenance Calculator — Official manuals + user reports for time cost
+"""Maintenance Calculator Module - Time cost estimation."""

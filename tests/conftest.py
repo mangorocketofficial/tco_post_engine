@@ -2,6 +2,7 @@
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,9 @@ import pytest
 # Ensure src is importable
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.part_a.common.config import Config
+from src.part_a.database.connection import init_db, get_connection
 
 
 @pytest.fixture
@@ -21,6 +25,23 @@ def project_root() -> Path:
 def fixtures_dir() -> Path:
     """Return the test fixtures directory."""
     return PROJECT_ROOT / "tests" / "fixtures"
+
+
+@pytest.fixture
+def temp_db(tmp_path):
+    """Provide a Config pointing to a temporary SQLite database."""
+    db_file = tmp_path / "test_tco.db"
+    config = Config(database_path=str(db_file))
+    init_db(config)
+    return config
+
+
+@pytest.fixture
+def db_conn(temp_db):
+    """Provide an initialized SQLite connection from temp_db."""
+    conn = get_connection(temp_db)
+    yield conn
+    conn.close()
 
 
 @pytest.fixture
