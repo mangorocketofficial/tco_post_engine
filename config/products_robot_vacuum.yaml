@@ -1,0 +1,43 @@
+# MVP Product List: Robot Vacuums (로봇청소기)
+# Phase 1 targets 3 products for comparison
+
+category: "로봇청소기"
+
+products:
+  - product_id: "roborock-s8-pro-ultra"
+    name: "로보락 S8 Pro Ultra"
+    brand: "로보락"
+    release_date: "2024-03-15"
+
+  - product_id: "samsung-bespoke-jet-bot-ai"
+    name: "삼성 비스포크 제트봇 AI"
+    brand: "삼성"
+    release_date: "2024-01-10"
+
+  - product_id: "lg-cordzero-r5"
+    name: "LG 코드제로 R5"
+    brand: "LG"
+    release_date: "2024-05-20"
+
+# Community keyword map for repair/AS search
+keywords:
+  repair: ["수리", "AS", "고장", "서비스센터", "교체", "부품"]
+  failure_types: ["센서", "모터", "소프트웨어", "배터리", "브러시", "물걸레", "충전"]
+
+# Maintenance task template
+maintenance_tasks:
+  - task: "먼지통 비우기"
+    frequency_per_month: 8
+    minutes_per_task: 2
+  - task: "물걸레 패드 세척"
+    frequency_per_month: 12
+    minutes_per_task: 3
+  - task: "브러시 청소"
+    frequency_per_month: 4
+    minutes_per_task: 5
+  - task: "필터 세척"
+    frequency_per_month: 2
+    minutes_per_task: 5
+  - task: "클린스테이션 관리"
+    frequency_per_month: 2
+    minutes_per_task: 10
