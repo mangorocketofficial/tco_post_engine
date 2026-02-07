@@ -1,11 +1,12 @@
 # Blockers
 
-No active blockers.
+No blockers reported.
 
-<!-- Format:
-## [Date] [Reporter] — [Title]
-- **Description:**
-- **Blocked module:**
-- **Needs:** (action or decision from Lead)
-- **Resolved:** Yes/No
--->
+## Template
+When reporting a blocker, use this format:
+```
+### [Date] [Reporter] — Short description
+- **Blocking:** What task is blocked
+- **Needs:** What resolution is required
+- **Status:** Open / Resolved
+```
