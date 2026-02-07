@@ -1,0 +1,35 @@
+{# Master Template: Complete Blog Post #}
+{# Combines all 7 sections (0-6) into a full affiliate blog post #}
+
+# {{ title }}
+
+{% include 'section_0_hook.jinja2' %}
+
+---
+
+{% include 'section_1_credibility.jinja2' %}
+
+---
+
+{% include 'section_2_criteria.jinja2' %}
+
+---
+
+{% include 'section_3_quick_pick.jinja2' %}
+
+---
+
+{% include 'section_4_tco_deep_dive.jinja2' %}
+
+---
+
+{% include 'section_5_action_trigger.jinja2' %}
+
+---
+
+{% include 'section_6_faq.jinja2' %}
+
+---
+
+*마지막 업데이트: {{ generated_at }}*
+*분석 데이터: 커뮤니티 리뷰 {{ total_review_count }}건*
