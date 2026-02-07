@@ -1,0 +1,19 @@
+{# Section 5: Action Trigger - Price Volatility + Disclosure #}
+## 지금 확인해야 하는 이유
+
+{{ category }} 가격은 **시즌, 프로모션, 재고**에 따라 크게 변동됩니다.
+
+{% if price_volatility %}
+- 지난 3개월간 가격 변동폭: **{{ price_volatility.min_diff }}원 ~ {{ price_volatility.max_diff }}원**
+- 현재 {{ price_volatility.status }} ({{ price_volatility.updated_date }} 기준)
+{% endif %}
+
+아래 링크에서 **실시간 최저가**를 꼭 확인해보세요.
+
+{% for product in top_products %}
+- {{ product.name }}: [최저가 확인하기]({{ product.cta_link }})
+{% endfor %}
+
+---
+
+**[공시]** 이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다. 구매 가격에는 영향이 없습니다.

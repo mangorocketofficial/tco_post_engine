@@ -1,0 +1,40 @@
+{# Section 4: TCO Deep Dive - Detailed Analysis #}
+## 제품별 상세 분석
+
+{% for product in products %}
+### {{ loop.index }}. {{ product.name }} ({{ product.brand }})
+
+{% if product.verdict == "recommend" %}
+**추천 이유**: {{ product.recommendation_reason }}
+{% else %}
+**주의 사항**: {{ product.caution_reason }}
+{% endif %}
+
+- **구매가 평균**: {{ "{:,}".format(product.tco.purchase_price_avg) }}원
+- **2년 후 중고가**: {{ "{:,}".format(product.tco.resale_value_24mo) }}원 (가치 보존율 {{ product.resale_curve["24mo"] }}%)
+- **예상 수리비**: {{ "{:,}".format(product.tco.expected_repair_cost) }}원
+- **3년 실비용**: **{{ "{:,}".format(product.tco.real_cost_3yr) }}원**
+
+[최저가 확인하기]({{ product.cta_link }})
+
+---
+
+{% endfor %}
+
+### 4-4. TCO 정량 비교표
+
+| 항목 | {% for product in products %}{{ product.name }} | {% endfor %}
+|------|{% for product in products %}--------|{% endfor %}
+| 구매가(평균) | {% for product in products %}{{ "{:,}".format(product.tco.purchase_price_avg) }}원 | {% endfor %}
+| 구매가(최저) | {% for product in products %}{{ "{:,}".format(product.tco.purchase_price_min) }}원 | {% endfor %}
+| 2년 후 중고가 | {% for product in products %}{{ "{:,}".format(product.tco.resale_value_24mo) }}원 | {% endfor %}
+| 예상 수리비 | {% for product in products %}{{ "{:,}".format(product.tco.expected_repair_cost) }}원 | {% endfor %}
+| **3년 실비용** | {% for product in products %}**{{ "{:,}".format(product.tco.real_cost_3yr) }}원** | {% endfor %}
+
+### 4-5. 정성 비교표 (사용 경험)
+
+| 항목 | {% for product in products %}{{ product.name }} | {% endfor %}
+|------|{% for product in products %}--------|{% endfor %}
+| AS 평균 소요일 | {% for product in products %}{{ product.tco.as_turnaround_days }}일 | {% endfor %}
+| 월 유지관리 시간 | {% for product in products %}{{ product.tco.monthly_maintenance_minutes }}분 | {% endfor %}
+| 3년간 유지관리 | {% for product in products %}{{ (product.tco.monthly_maintenance_minutes * 36) // 60 }}시간 {{ (product.tco.monthly_maintenance_minutes * 36) % 60 }}분 | {% endfor %}

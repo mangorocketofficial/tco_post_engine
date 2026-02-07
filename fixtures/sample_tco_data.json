@@ -1,0 +1,132 @@
+{
+  "$schema": "Part A → Part B API Contract",
+  "version": "1.0",
+  "category": "로봇청소기",
+  "generated_at": "2026-02-07T12:00:00+09:00",
+  "products": [
+    {
+      "product_id": "roborock-q-revo-s",
+      "name": "로보락 Q Revo S",
+      "brand": "로보락",
+      "release_date": "2024-03-15",
+      "tco": {
+        "purchase_price_avg": 899000,
+        "purchase_price_min": 849000,
+        "resale_value_24mo": 450000,
+        "expected_repair_cost": 85000,
+        "real_cost_3yr": 534000,
+        "as_turnaround_days": 5.2,
+        "monthly_maintenance_minutes": 10
+      },
+      "price_history": [
+        {"date": "2026-02-01", "price": 899000, "source": "danawa", "is_sale": false},
+        {"date": "2026-02-02", "price": 879000, "source": "coupang", "is_sale": true},
+        {"date": "2026-02-03", "price": 899000, "source": "danawa", "is_sale": false},
+        {"date": "2026-02-04", "price": 849000, "source": "coupang", "is_sale": true},
+        {"date": "2026-02-05", "price": 899000, "source": "danawa", "is_sale": false}
+      ],
+      "resale_curve": {
+        "6mo": 85,
+        "12mo": 72,
+        "18mo": 60,
+        "24mo": 50
+      },
+      "repair_stats": {
+        "total_reports": 127,
+        "failure_types": [
+          {"type": "브러시 마모", "count": 45, "avg_cost": 35000, "probability": 0.35},
+          {"type": "센서 오류", "count": 32, "avg_cost": 80000, "probability": 0.25},
+          {"type": "배터리 교체", "count": 28, "avg_cost": 150000, "probability": 0.22},
+          {"type": "물걸레 모듈", "count": 22, "avg_cost": 60000, "probability": 0.18}
+        ]
+      },
+      "maintenance_tasks": [
+        {"task": "먼지통 비우기", "frequency_per_month": 4, "minutes_per_task": 1},
+        {"task": "필터 세척", "frequency_per_month": 2, "minutes_per_task": 3}
+      ]
+    },
+    {
+      "product_id": "samsung-bespoke-jet-ai",
+      "name": "삼성 비스포크 제트 AI",
+      "brand": "삼성",
+      "release_date": "2024-06-01",
+      "tco": {
+        "purchase_price_avg": 1290000,
+        "purchase_price_min": 1190000,
+        "resale_value_24mo": 650000,
+        "expected_repair_cost": 45000,
+        "real_cost_3yr": 685000,
+        "as_turnaround_days": 3.1,
+        "monthly_maintenance_minutes": 5
+      },
+      "price_history": [
+        {"date": "2026-02-01", "price": 1290000, "source": "danawa", "is_sale": false},
+        {"date": "2026-02-02", "price": 1250000, "source": "coupang", "is_sale": true},
+        {"date": "2026-02-03", "price": 1290000, "source": "danawa", "is_sale": false},
+        {"date": "2026-02-04", "price": 1190000, "source": "coupang", "is_sale": true},
+        {"date": "2026-02-05", "price": 1290000, "source": "danawa", "is_sale": false}
+      ],
+      "resale_curve": {
+        "6mo": 88,
+        "12mo": 75,
+        "18mo": 62,
+        "24mo": 50
+      },
+      "repair_stats": {
+        "total_reports": 89,
+        "failure_types": [
+          {"type": "센서 오류", "count": 28, "avg_cost": 50000, "probability": 0.31},
+          {"type": "소프트웨어 오류", "count": 35, "avg_cost": 0, "probability": 0.39},
+          {"type": "배터리 교체", "count": 18, "avg_cost": 180000, "probability": 0.20},
+          {"type": "모터 이상", "count": 8, "avg_cost": 120000, "probability": 0.10}
+        ]
+      },
+      "maintenance_tasks": [
+        {"task": "먼지통 자동비움 확인", "frequency_per_month": 2, "minutes_per_task": 1},
+        {"task": "필터 교체", "frequency_per_month": 0.5, "minutes_per_task": 2}
+      ]
+    },
+    {
+      "product_id": "ecovacs-x2-combo",
+      "name": "에코백스 X2 콤보",
+      "brand": "에코백스",
+      "release_date": "2024-09-10",
+      "tco": {
+        "purchase_price_avg": 1490000,
+        "purchase_price_min": 1390000,
+        "resale_value_24mo": 700000,
+        "expected_repair_cost": 120000,
+        "real_cost_3yr": 910000,
+        "as_turnaround_days": 8.5,
+        "monthly_maintenance_minutes": 15
+      },
+      "price_history": [
+        {"date": "2026-02-01", "price": 1490000, "source": "danawa", "is_sale": false},
+        {"date": "2026-02-02", "price": 1450000, "source": "coupang", "is_sale": true},
+        {"date": "2026-02-03", "price": 1490000, "source": "danawa", "is_sale": false},
+        {"date": "2026-02-04", "price": 1390000, "source": "coupang", "is_sale": true},
+        {"date": "2026-02-05", "price": 1490000, "source": "danawa", "is_sale": false}
+      ],
+      "resale_curve": {
+        "6mo": 82,
+        "12mo": 68,
+        "18mo": 55,
+        "24mo": 47
+      },
+      "repair_stats": {
+        "total_reports": 156,
+        "failure_types": [
+          {"type": "핸디청소기 연결", "count": 52, "avg_cost": 70000, "probability": 0.33},
+          {"type": "센서 오류", "count": 41, "avg_cost": 90000, "probability": 0.26},
+          {"type": "물걸레 모듈", "count": 38, "avg_cost": 80000, "probability": 0.24},
+          {"type": "배터리 교체", "count": 25, "avg_cost": 200000, "probability": 0.17}
+        ]
+      },
+      "maintenance_tasks": [
+        {"task": "먼지통 비우기", "frequency_per_month": 4, "minutes_per_task": 2},
+        {"task": "물걸레 세척", "frequency_per_month": 8, "minutes_per_task": 1},
+        {"task": "필터 세척", "frequency_per_month": 2, "minutes_per_task": 3}
+      ]
+    }
+  ]
+}
