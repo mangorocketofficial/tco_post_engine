@@ -1,17 +1,18 @@
 #!/bin/bash
 # TCO_Post_Engine — Agent Team Dev Launcher
-# Launches 3 Windows Terminal panes: Lead / PartA / PartB
-# Each pane runs Claude Code CLI targeting its respective worktree.
+# Launches 3 Windows Terminal panes with Claude Code auto-started per role.
 
 PROJECT_ROOT="C:/Users/User/Desktop/project"
 MAIN_DIR="$PROJECT_ROOT/TCO_Post_Engine"
 PARTA_DIR="$PROJECT_ROOT/TCO_Post_Engine-partA"
 PARTB_DIR="$PROJECT_ROOT/TCO_Post_Engine-partB"
 
+PROMPTS_DIR="$MAIN_DIR/.prompts"
+
 echo "=== TCO Post Engine — Agent Team Dev ==="
-echo "Main (Lead):  $MAIN_DIR"
-echo "PartA:        $PARTA_DIR"
-echo "PartB:        $PARTB_DIR"
+echo "Main (Lead):  $MAIN_DIR   [master]"
+echo "PartA:        $PARTA_DIR  [dev/part-a]"
+echo "PartB:        $PARTB_DIR  [dev/part-b]"
 echo ""
 
 # Verify worktrees exist
@@ -22,11 +23,22 @@ if [ ! -d "$PARTA_DIR" ] || [ ! -d "$PARTB_DIR" ]; then
     exit 1
 fi
 
+# Sync prompts to worktrees so each pane can read its own
+cp -r "$PROMPTS_DIR" "$PARTA_DIR/.prompts" 2>/dev/null
+cp -r "$PROMPTS_DIR" "$PARTB_DIR/.prompts" 2>/dev/null
+
+# Make scripts executable
+chmod +x "$PROMPTS_DIR"/start-*.sh
+chmod +x "$PARTA_DIR/.prompts"/start-*.sh 2>/dev/null
+chmod +x "$PARTB_DIR/.prompts"/start-*.sh 2>/dev/null
+
+echo "Launching Windows Terminal with 3 agent panes..."
+echo ""
+
 # Launch Windows Terminal with 3 split panes
 wt.exe \
-  -d "$MAIN_DIR" --title "LEAD (main)" bash -c "echo '=== LEAD Developer (main) ==='; echo 'Worktree: main'; echo ''; git log --oneline -3; echo ''; exec bash" \; \
-  split-pane -H -d "$PARTA_DIR" --title "PART-A (dev/part-a)" bash -c "echo '=== PART-A Developer (dev/part-a) ==='; echo 'Worktree: dev/part-a'; echo ''; git log --oneline -3; echo ''; exec bash" \; \
-  split-pane -V -d "$PARTB_DIR" --title "PART-B (dev/part-b)" bash -c "echo '=== PART-B Developer (dev/part-b) ==='; echo 'Worktree: dev/part-b'; echo ''; git log --oneline -3; echo ''; exec bash" \;
+  -d "$MAIN_DIR" --title "LEAD (main)" bash "$PROMPTS_DIR/start-lead.sh" \; \
+  split-pane -H -d "$PARTA_DIR" --title "PART-A (dev/part-a)" bash "$PARTA_DIR/.prompts/start-part-a.sh" \; \
+  split-pane -V -d "$PARTB_DIR" --title "PART-B (dev/part-b)" bash "$PARTB_DIR/.prompts/start-part-b.sh"
 
-echo "Windows Terminal launched with 3 panes."
-echo "Run 'claude' in each pane to start the respective developer agent."
+echo "Done. 3 Claude Code agents are now running in Windows Terminal."
