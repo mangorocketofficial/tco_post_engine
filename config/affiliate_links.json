@@ -1,0 +1,22 @@
+{
+  "links": [
+    {
+      "product_id": "roborock-s8-pro-ultra",
+      "base_url": "https://link.coupang.com/re/AFFSDP?lptag=AF1234567",
+      "platform": "coupang",
+      "affiliate_tag": "mangorocket"
+    },
+    {
+      "product_id": "samsung-bespoke-jet-bot-ai",
+      "base_url": "https://link.coupang.com/re/AFFSDP?lptag=AF2345678",
+      "platform": "coupang",
+      "affiliate_tag": "mangorocket"
+    },
+    {
+      "product_id": "lg-cordzero-r5",
+      "base_url": "https://link.coupang.com/re/AFFSDP?lptag=AF3456789",
+      "platform": "coupang",
+      "affiliate_tag": "mangorocket"
+    }
+  ]
+}
