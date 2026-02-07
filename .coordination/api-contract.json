@@ -1,0 +1,59 @@
+{
+  "$schema": "Part A → Part B API Contract",
+  "version": "1.0",
+  "description": "TCO data export format from Part A consumed by Part B",
+  "endpoint": "JSON file export (MVP) → REST API (Phase 2)",
+  "schema": {
+    "category": "string (e.g., '로봇청소기')",
+    "generated_at": "ISO 8601 datetime",
+    "products": [
+      {
+        "product_id": "string",
+        "name": "string",
+        "brand": "string",
+        "release_date": "YYYY-MM-DD",
+        "tco": {
+          "purchase_price_avg": "number (KRW)",
+          "purchase_price_min": "number (KRW)",
+          "resale_value_24mo": "number (KRW)",
+          "expected_repair_cost": "number (KRW)",
+          "real_cost_3yr": "number (KRW, = purchase + repair - resale)",
+          "as_turnaround_days": "number (avg days)",
+          "monthly_maintenance_minutes": "number (min/month)"
+        },
+        "price_history": [
+          {
+            "date": "YYYY-MM-DD",
+            "price": "number",
+            "source": "string (danawa|coupang|naver)",
+            "is_sale": "boolean"
+          }
+        ],
+        "resale_curve": {
+          "6mo": "number (retention %)",
+          "12mo": "number (retention %)",
+          "18mo": "number (retention %)",
+          "24mo": "number (retention %)"
+        },
+        "repair_stats": {
+          "total_reports": "number",
+          "failure_types": [
+            {
+              "type": "string",
+              "count": "number",
+              "avg_cost": "number",
+              "probability": "number (0-1)"
+            }
+          ]
+        },
+        "maintenance_tasks": [
+          {
+            "task": "string",
+            "frequency_per_month": "number",
+            "minutes_per_task": "number"
+          }
+        ]
+      }
+    ]
+  }
+}
