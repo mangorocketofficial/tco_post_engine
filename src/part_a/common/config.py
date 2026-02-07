@@ -42,6 +42,20 @@ class Config:
     # Danggeun
     danggeun_base_url: str = "https://www.daangn.com"
 
+    # Naver Shopping
+    naver_shopping_base_url: str = "https://search.shopping.naver.com"
+
+    # Coupang
+    coupang_base_url: str = "https://www.coupang.com"
+
+    # Naver DataLab API
+    naver_datalab_client_id: str = field(
+        default_factory=lambda: os.getenv("NAVER_DATALAB_CLIENT_ID", "")
+    )
+    naver_datalab_client_secret: str = field(
+        default_factory=lambda: os.getenv("NAVER_DATALAB_CLIENT_SECRET", "")
+    )
+
     def __post_init__(self) -> None:
         """Load overrides from environment."""
         if timeout := os.getenv("REQUEST_TIMEOUT"):
@@ -54,6 +68,10 @@ class Config:
             self.danawa_base_url = url
         if url := os.getenv("DANGGEUN_BASE_URL"):
             self.danggeun_base_url = url
+        if url := os.getenv("NAVER_SHOPPING_BASE_URL"):
+            self.naver_shopping_base_url = url
+        if url := os.getenv("COUPANG_BASE_URL"):
+            self.coupang_base_url = url
 
     @property
     def database_abs_path(self) -> Path:

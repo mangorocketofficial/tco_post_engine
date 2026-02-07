@@ -73,6 +73,18 @@ CREATE TABLE IF NOT EXISTS maintenance_tasks (
     minutes_per_task REAL NOT NULL,
     FOREIGN KEY (product_id) REFERENCES products(id)
 );
+
+CREATE TABLE IF NOT EXISTS product_selections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    category TEXT NOT NULL,
+    selection_date TEXT NOT NULL,
+    candidate_pool_size INTEGER,
+    result_json TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_selections_category_date
+    ON product_selections(category, selection_date);
 """
 
 

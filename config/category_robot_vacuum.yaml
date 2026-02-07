@@ -1,0 +1,14 @@
+# Category config for A-0 Product Selector: Robot Vacuums
+name: "robot_vacuum"
+search_terms: ["로봇청소기"]
+danawa_category_code: "10204001"
+
+negative_keywords: ["불만", "후회", "실망", "반품", "고장", "AS", "수리", "오류"]
+positive_keywords: ["추천", "만족", "최고", "잘샀다", "좋아요", "강추"]
+
+price_range:
+  min: 300000
+  max: 2000000
+
+max_product_age_months: 18
+min_community_posts: 20
