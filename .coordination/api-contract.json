@@ -1,8 +1,75 @@
 {
   "$schema": "Part A → Part B API Contract",
-  "version": "1.0",
-  "description": "TCO data export format from Part A consumed by Part B",
+  "version": "1.1",
+  "description": "TCO data export format from Part A consumed by Part B. Includes intermediate A2/A3 schemas for hybrid pipeline.",
   "endpoint": "JSON file export (MVP) → REST API (Phase 2)",
+
+  "intermediate_schemas": {
+    "a2_resale": {
+      "description": "Claude WebSearch로 수집한 중고 시세 데이터 (data/processed/a2_resale_{category}.json)",
+      "schema": {
+        "category": "string",
+        "searched_at": "ISO 8601 datetime",
+        "source": "claude_web_search",
+        "products": [
+          {
+            "product_name": "string (제품 전체명)",
+            "purchase_price_avg": "number (KRW, A1에서 가져온 신품가)",
+            "resale_prices": {
+              "1yr": {
+                "price": "number (KRW, 1년 미만 사용 중고 중앙값)",
+                "sample_count": "number (참고한 매물 수)",
+                "sources": ["string (당근마켓|번개장터|중고나라|기타)"]
+              },
+              "2yr": {
+                "price": "number (KRW)",
+                "sample_count": "number",
+                "sources": ["string"]
+              },
+              "3yr_plus": {
+                "price": "number (KRW)",
+                "sample_count": "number",
+                "sources": ["string"]
+              }
+            },
+            "retention_curve": {
+              "1yr": "number (0-1, resale_1yr / purchase_price_avg)",
+              "2yr": "number (0-1)",
+              "3yr_plus": "number (0-1)"
+            },
+            "notes": "string (검색 특이사항)"
+          }
+        ]
+      }
+    },
+    "a3_repair": {
+      "description": "Claude WebSearch로 수집한 수리비/AS 데이터 (data/processed/a3_repair_{category}.json)",
+      "schema": {
+        "category": "string",
+        "searched_at": "ISO 8601 datetime",
+        "source": "claude_web_search",
+        "products": [
+          {
+            "product_name": "string (제품 전체명)",
+            "warranty_months": "number (무상 보증 기간, 월)",
+            "failure_types": [
+              {
+                "type": "string (고장 유형: sensor|motor|battery|suction|brush|etc)",
+                "avg_cost": "number (KRW, 평균 수리 비용)",
+                "probability": "number (0-1, 발생 확률 추정)",
+                "description": "string (고장 상세 설명)",
+                "sources": ["string (URL 또는 출처명)"]
+              }
+            ],
+            "expected_repair_cost": "number (KRW, sum of avg_cost × probability)",
+            "avg_as_days": "number (AS 평균 소요일)",
+            "notes": "string (검색 특이사항)"
+          }
+        ]
+      }
+    }
+  },
+
   "schema": {
     "category": "string (e.g., '로봇청소기')",
     "generated_at": "ISO 8601 datetime",
@@ -15,9 +82,11 @@
         "tco": {
           "purchase_price_avg": "number (KRW)",
           "purchase_price_min": "number (KRW)",
-          "resale_value_24mo": "number (KRW)",
+          "resale_value_1yr": "number (KRW)",
+          "resale_value_2yr": "number (KRW)",
+          "resale_value_3yr_plus": "number (KRW)",
           "expected_repair_cost": "number (KRW)",
-          "real_cost_3yr": "number (KRW, = purchase + repair - resale)",
+          "real_cost_3yr": "number (KRW, = purchase + repair - resale_value_2yr)",
           "as_turnaround_days": "number (avg days)",
           "monthly_maintenance_minutes": "number (min/month)"
         },
@@ -30,10 +99,9 @@
           }
         ],
         "resale_curve": {
-          "6mo": "number (retention %)",
-          "12mo": "number (retention %)",
-          "18mo": "number (retention %)",
-          "24mo": "number (retention %)"
+          "1yr": "number (retention %)",
+          "2yr": "number (retention %)",
+          "3yr_plus": "number (retention %)"
         },
         "repair_stats": {
           "total_reports": "number",
@@ -50,7 +118,8 @@
           {
             "task": "string",
             "frequency_per_month": "number",
-            "minutes_per_task": "number"
+            "minutes_per_task": "number",
+            "automated": "boolean (optional, true=auto, false=manual)"
           }
         ]
       }

@@ -116,8 +116,13 @@ class TestTCOCalculator:
         assert tco_data["purchase_price_avg"] == 1455000
         assert tco_data["purchase_price_min"] == 1390000
 
-        # Q2: Resale at 24mo — avg of (650000, 600000) = 625000
-        assert tco_data["resale_value_24mo"] == 625000
+        # Q2: Resale Values (yearly buckets, median, worn excluded)
+        # 1yr (≤18mo): [1200000, 1100000, 900000, 750000] → median = 1000000
+        assert tco_data["resale_value_1yr"] == 1000000
+        # 2yr (18-30mo): [650000] → median = 650000 (worn 600000 excluded)
+        assert tco_data["resale_value_2yr"] == 650000
+        # 3yr+ (>30mo): [] → 0
+        assert tco_data["resale_value_3yr_plus"] == 0
 
         # Q3: Expected Repair Cost
         # sensor: avg=165000, prob=0.5 → 82500
@@ -126,8 +131,8 @@ class TestTCOCalculator:
         # total = 187500
         assert tco_data["expected_repair_cost"] == 187500
 
-        # Real Cost = 1455000 + 187500 - 625000 = 1017500
-        assert tco_data["real_cost_3yr"] == 1017500
+        # Real Cost = 1455000 + 187500 - 650000 = 992500
+        assert tco_data["real_cost_3yr"] == 992500
 
         # S1: AS Days — avg of (7, 5, 14, 3) = 7.25
         assert tco_data["as_turnaround_days"] == 7.2  # rounded to 1 decimal
@@ -142,7 +147,9 @@ class TestTCOCalculator:
 
         tco_data = tco["tco"]
         assert tco_data["purchase_price_avg"] == 1270000  # avg(1290000, 1250000)
-        assert tco_data["resale_value_24mo"] == 0  # No resale data available
+        assert tco_data["resale_value_1yr"] == 0  # No resale data available
+        assert tco_data["resale_value_2yr"] == 0
+        assert tco_data["resale_value_3yr_plus"] == 0
         assert tco_data["expected_repair_cost"] == 0
         assert tco_data["monthly_maintenance_minutes"] == 0.0
         # Real cost = purchase + 0 - 0
@@ -174,9 +181,8 @@ class TestTCOCalculator:
         tco = calc.calculate_for_product(1)
 
         curve = tco["resale_curve"]
-        assert "6mo" in curve
-        assert "12mo" in curve
-        assert "24mo" in curve
+        assert "1yr" in curve
+        assert "2yr" in curve
 
     def test_repair_stats_included(self, populated_db):
         calc = TCOCalculator(populated_db)
@@ -206,7 +212,7 @@ class TestTCOCalculator:
             ).fetchone()
             assert row is not None
             assert row["purchase_price_avg"] == 1455000
-            assert row["real_cost_3yr"] == 1017500
+            assert row["real_cost_3yr"] == 992500
         finally:
             conn.close()
 
@@ -243,7 +249,9 @@ class TestTCOExporter:
         tco = product["tco"]
         assert "purchase_price_avg" in tco
         assert "purchase_price_min" in tco
-        assert "resale_value_24mo" in tco
+        assert "resale_value_1yr" in tco
+        assert "resale_value_2yr" in tco
+        assert "resale_value_3yr_plus" in tco
         assert "expected_repair_cost" in tco
         assert "real_cost_3yr" in tco
         assert "as_turnaround_days" in tco
@@ -388,7 +396,9 @@ class TestEndToEnd:
         tco = calc.calculate_for_product(1)
 
         assert tco["tco"]["purchase_price_avg"] == 975000  # avg(1000000, 950000)
-        assert tco["tco"]["resale_value_24mo"] == 500000
+        assert tco["tco"]["resale_value_1yr"] == 0
+        assert tco["tco"]["resale_value_2yr"] == 500000
+        assert tco["tco"]["resale_value_3yr_plus"] == 0
         assert tco["tco"]["expected_repair_cost"] == 100000
         assert tco["tco"]["real_cost_3yr"] == 575000  # 975000 + 100000 - 500000
         assert tco["tco"]["as_turnaround_days"] == 5.0

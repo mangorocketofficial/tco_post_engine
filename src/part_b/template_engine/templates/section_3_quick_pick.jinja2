@@ -1,10 +1,11 @@
-{# Section 3: Quick Pick Table - 3-column comparison with CTAs #}
+{# Section 3: Quick Pick Table - Vertical Comparison with Slot Labels #}
 ## 한눈에 보는 추천 TOP 3
 
-| 제품 | 3년 실비용 | 추천 포인트 | 구매링크 |
-|------|-----------|-------------|----------|
-{% for product in top_products %}
-| **{{ product.name }}** | {{ "{:,}".format(product.tco.real_cost_3yr) }}원 | {{ product.highlight }} | [최저가 확인하기]({{ product.cta_link }}) |
-{% endfor %}
+| | {% for product in top_products %}{{ product.slot_label or product.name }} | {% endfor %}
+|---|{% for product in top_products %}---|{% endfor %}
+| 제품명 | {% for product in top_products %}**{{ product.name }}** | {% endfor %}
+| 핵심 포인트 | {% for product in top_products %}{{ product.highlight }} | {% endfor %}
+| 3년 실비용 | {% for product in top_products %}{{ "{:,}".format(product.tco.real_cost_3yr) }}원 | {% endfor %}
+| | {% for product in top_products %}[최저가 확인하기]({{ product.cta_link }}) | {% endfor %}
 
 > 가격은 {{ price_updated_date }} 기준이며, 실시간 변동될 수 있습니다.

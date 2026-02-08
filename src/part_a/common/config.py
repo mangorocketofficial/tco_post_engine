@@ -45,6 +45,9 @@ class Config:
     # Naver Shopping
     naver_shopping_base_url: str = "https://search.shopping.naver.com"
 
+    # Bunjang
+    bunjang_base_url: str = "https://api.bunjang.co.kr"
+
     # Coupang
     coupang_base_url: str = "https://www.coupang.com"
 
@@ -56,6 +59,20 @@ class Config:
     naver_datalab_client_secret: str = field(
         default_factory=lambda: os.getenv("NAVER_DATALAB_CLIENT_SECRET")
         or os.getenv("NAVER_CLIENT_SECRET", "")
+    )
+
+    # Naver Search Ad API (keyword metrics: CPC, clicks, search volume)
+    naver_searchad_customer_id: str = field(
+        default_factory=lambda: os.getenv("NAVER_SEARCHAD_CUSTOMER_ID")
+        or os.getenv("NAVER_AD_CUSTOMER_ID", "")
+    )
+    naver_searchad_api_key: str = field(
+        default_factory=lambda: os.getenv("NAVER_SEARCHAD_API_KEY")
+        or os.getenv("NAVER_AD_API_KEY", "")
+    )
+    naver_searchad_secret_key: str = field(
+        default_factory=lambda: os.getenv("NAVER_SEARCHAD_SECRET_KEY")
+        or os.getenv("NAVER_AD_SECRET_KEY", "")
     )
 
     def __post_init__(self) -> None:
@@ -72,6 +89,8 @@ class Config:
             self.danggeun_base_url = url
         if url := os.getenv("NAVER_SHOPPING_BASE_URL"):
             self.naver_shopping_base_url = url
+        if url := os.getenv("BUNJANG_BASE_URL"):
+            self.bunjang_base_url = url
         if url := os.getenv("COUPANG_BASE_URL"):
             self.coupang_base_url = url
 

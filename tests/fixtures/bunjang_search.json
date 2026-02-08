@@ -1,0 +1,67 @@
+{
+  "result": "success",
+  "list": [
+    {
+      "pid": "300001",
+      "name": "로보락 Q Revo S 풀세트 거의새것",
+      "price": "1150000",
+      "status": "2",
+      "used": 1,
+      "update_time": 1738684800,
+      "uid": "10001",
+      "product_image": "https://media.bunjang.co.kr/product/300001_1.jpg",
+      "num_faved": "5",
+      "free_shipping": false
+    },
+    {
+      "pid": "300002",
+      "name": "로보락 Q Revo S 본체만 중고",
+      "price": "800000",
+      "status": "2",
+      "used": 1,
+      "update_time": 1738080000,
+      "uid": "10002",
+      "product_image": "https://media.bunjang.co.kr/product/300002_1.jpg",
+      "num_faved": "3",
+      "free_shipping": false
+    },
+    {
+      "pid": "300003",
+      "name": "로보락 Q Revo S 미개봉 새상품",
+      "price": "1400000",
+      "status": "2",
+      "used": 0,
+      "update_time": 1737475200,
+      "uid": "10003",
+      "product_image": "https://media.bunjang.co.kr/product/300003_1.jpg",
+      "num_faved": "8",
+      "free_shipping": true
+    },
+    {
+      "pid": "300004",
+      "name": "로보락 Q Revo S 판매합니다",
+      "price": "1050000",
+      "status": "0",
+      "used": 1,
+      "update_time": 1738771200,
+      "uid": "10004",
+      "product_image": "https://media.bunjang.co.kr/product/300004_1.jpg",
+      "num_faved": "2",
+      "free_shipping": false
+    },
+    {
+      "pid": "300005",
+      "name": "로보락 Q Revo S 하자 있음 부품용",
+      "price": "350000",
+      "status": "0",
+      "used": 1,
+      "update_time": 1738598400,
+      "uid": "10005",
+      "product_image": "https://media.bunjang.co.kr/product/300005_1.jpg",
+      "num_faved": "1",
+      "free_shipping": false
+    }
+  ],
+  "num_found": 5,
+  "n": 5
+}

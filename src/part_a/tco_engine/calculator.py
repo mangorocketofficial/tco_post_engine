@@ -3,15 +3,19 @@
 Pulls price, resale, repair, and maintenance data from the database
 and calculates the 3-year TCO for each product.
 
+Supports hybrid pipeline: DB data (A1) + Claude WebSearch JSON overrides (A2/A3).
+
 Formula: Real Cost (3yr) = Q1 (Purchase Price) + Q3 (Repair Cost) − Q2 (Resale Value)
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from datetime import date
-from statistics import mean
+from pathlib import Path
+from statistics import mean, median
 
 from ..common.config import Config
 from ..database.connection import get_connection
@@ -22,14 +26,50 @@ logger = logging.getLogger(__name__)
 class TCOCalculator:
     """Calculate TCO metrics for products from database data.
 
+    Supports optional A2 (resale) and A3 (repair) JSON overrides from
+    Claude WebSearch. When provided, these override the DB-sourced data.
+
     Usage:
         calc = TCOCalculator()
         tco = calc.calculate_for_product(product_id=1)
         print(f"3-year real cost: {tco['real_cost_3yr']:,}원")
+
+        # With A2/A3 overrides:
+        calc = TCOCalculator(a2_data_path="data/processed/a2_resale.json",
+                             a3_data_path="data/processed/a3_repair.json")
     """
 
-    def __init__(self, config: Config | None = None) -> None:
+    def __init__(
+        self,
+        config: Config | None = None,
+        a2_data_path: str | Path | None = None,
+        a3_data_path: str | Path | None = None,
+    ) -> None:
         self.config = config or Config()
+        self._a2_overrides: dict[str, dict] = {}
+        self._a3_overrides: dict[str, dict] = {}
+
+        if a2_data_path:
+            self._a2_overrides = self._load_override_json(a2_data_path, "A2 resale")
+        if a3_data_path:
+            self._a3_overrides = self._load_override_json(a3_data_path, "A3 repair")
+
+    @staticmethod
+    def _load_override_json(path: str | Path, label: str) -> dict[str, dict]:
+        """Load A2/A3 JSON and index by product_name for fast lookup."""
+        path = Path(path)
+        if not path.exists():
+            logger.warning("%s file not found: %s", label, path)
+            return {}
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        indexed = {}
+        for product in data.get("products", []):
+            name = product.get("product_name", "")
+            if name:
+                indexed[name] = product
+        logger.info("Loaded %s override: %d products from %s", label, len(indexed), path)
+        return indexed
 
     def calculate_for_product(self, product_id: int) -> dict:
         """Calculate all TCO metrics for a single product.
@@ -47,22 +87,24 @@ class TCOCalculator:
                 raise ValueError(f"Product {product_id} not found")
 
             price_data = self._get_price_data(conn, product_id)
-            resale_data = self._get_resale_data(conn, product_id)
-            repair_data = self._get_repair_data(conn, product_id)
+            resale_data = self._resolve_resale_data(conn, product_id, product["name"])
+            repair_data = self._resolve_repair_data(conn, product_id, product["name"])
             maintenance_data = self._get_maintenance_data(conn, product_id)
 
             # Q1: Purchase Price
             purchase_avg = price_data.get("avg_price", 0)
             purchase_min = price_data.get("min_price", 0)
 
-            # Q2: Resale Value at 24 months
-            resale_24mo = resale_data.get("resale_value_24mo", 0)
+            # Q2: Resale Values (1yr / 2yr / 3yr+)
+            resale_1yr = resale_data.get("resale_value_1yr", 0)
+            resale_2yr = resale_data.get("resale_value_2yr", 0)
+            resale_3yr_plus = resale_data.get("resale_value_3yr_plus", 0)
 
             # Q3: Expected Repair Cost (probability-weighted)
             expected_repair = repair_data.get("expected_repair_cost", 0)
 
-            # TCO Formula
-            real_cost_3yr = purchase_avg + expected_repair - resale_24mo
+            # TCO Formula (uses 2yr resale — most common resale timeframe)
+            real_cost_3yr = purchase_avg + expected_repair - resale_2yr
 
             # S1: AS Turnaround Days
             as_days = repair_data.get("avg_as_days", 0.0)
@@ -79,7 +121,9 @@ class TCOCalculator:
                 "tco": {
                     "purchase_price_avg": purchase_avg,
                     "purchase_price_min": purchase_min,
-                    "resale_value_24mo": resale_24mo,
+                    "resale_value_1yr": resale_1yr,
+                    "resale_value_2yr": resale_2yr,
+                    "resale_value_3yr_plus": resale_3yr_plus,
                     "expected_repair_cost": expected_repair,
                     "real_cost_3yr": real_cost_3yr,
                     "as_turnaround_days": round(as_days, 1),
@@ -92,10 +136,10 @@ class TCOCalculator:
             }
 
             logger.info(
-                "TCO for %s: purchase=%s, resale=%s, repair=%s → real_cost=%s",
+                "TCO for %s: purchase=%s, resale(2yr)=%s, repair=%s → real_cost=%s",
                 product["name"],
                 f"{purchase_avg:,}",
-                f"{resale_24mo:,}",
+                f"{resale_2yr:,}",
                 f"{expected_repair:,}",
                 f"{real_cost_3yr:,}",
             )
@@ -137,7 +181,9 @@ class TCOCalculator:
                     product_id INTEGER NOT NULL UNIQUE,
                     purchase_price_avg INTEGER,
                     purchase_price_min INTEGER,
-                    resale_value_24mo INTEGER,
+                    resale_value_1yr INTEGER,
+                    resale_value_2yr INTEGER,
+                    resale_value_3yr_plus INTEGER,
                     expected_repair_cost INTEGER,
                     real_cost_3yr INTEGER,
                     as_turnaround_days REAL,
@@ -151,14 +197,17 @@ class TCOCalculator:
             conn.execute("""
                 INSERT OR REPLACE INTO tco_summaries
                 (product_id, purchase_price_avg, purchase_price_min,
-                 resale_value_24mo, expected_repair_cost, real_cost_3yr,
+                 resale_value_1yr, resale_value_2yr, resale_value_3yr_plus,
+                 expected_repair_cost, real_cost_3yr,
                  as_turnaround_days, monthly_maintenance_minutes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 product_id,
                 tco_data["purchase_price_avg"],
                 tco_data["purchase_price_min"],
-                tco_data["resale_value_24mo"],
+                tco_data["resale_value_1yr"],
+                tco_data["resale_value_2yr"],
+                tco_data["resale_value_3yr_plus"],
                 tco_data["expected_repair_cost"],
                 tco_data["real_cost_3yr"],
                 tco_data["as_turnaround_days"],
@@ -207,9 +256,91 @@ class TCOCalculator:
             "history": history,
         }
 
+    def _resolve_resale_data(
+        self, conn: sqlite3.Connection, product_id: int, product_name: str
+    ) -> dict:
+        """Get resale data from A2 override if available, else from DB."""
+        a2 = self._find_override(self._a2_overrides, product_name)
+        if a2:
+            resale_prices = a2.get("resale_prices", {})
+            resale_1yr = resale_prices.get("1yr", {}).get("price", 0)
+            resale_2yr = resale_prices.get("2yr", {}).get("price", 0)
+            resale_3yr_plus = resale_prices.get("3yr_plus", {}).get("price", 0)
+
+            curve = a2.get("retention_curve", {})
+
+            logger.info(
+                "A2 override for %s: 1yr=%s, 2yr=%s, 3yr+=%s",
+                product_name, f"{resale_1yr:,}", f"{resale_2yr:,}", f"{resale_3yr_plus:,}",
+            )
+            return {
+                "resale_value_1yr": resale_1yr,
+                "resale_value_2yr": resale_2yr,
+                "resale_value_3yr_plus": resale_3yr_plus,
+                "curve": {
+                    "1yr": resale_1yr if resale_1yr else None,
+                    "2yr": resale_2yr if resale_2yr else None,
+                    "3yr_plus": resale_3yr_plus if resale_3yr_plus else None,
+                },
+            }
+        return self._get_resale_data(conn, product_id)
+
+    def _resolve_repair_data(
+        self, conn: sqlite3.Connection, product_id: int, product_name: str
+    ) -> dict:
+        """Get repair data from A3 override if available, else from DB."""
+        a3 = self._find_override(self._a3_overrides, product_name)
+        if a3:
+            failure_types = []
+            for ft in a3.get("failure_types", []):
+                failure_types.append({
+                    "type": ft.get("type", ""),
+                    "count": 1,
+                    "avg_cost": ft.get("avg_cost", 0),
+                    "probability": ft.get("probability", 0),
+                })
+
+            expected_repair = a3.get("expected_repair_cost", 0)
+            avg_as_days = a3.get("avg_as_days", 0.0)
+
+            logger.info(
+                "A3 override for %s: repair=%s, AS=%.1f days",
+                product_name, f"{expected_repair:,}", avg_as_days,
+            )
+            return {
+                "expected_repair_cost": expected_repair,
+                "avg_as_days": avg_as_days,
+                "stats": {
+                    "total_reports": len(failure_types),
+                    "failure_types": failure_types,
+                },
+            }
+        return self._get_repair_data(conn, product_id)
+
+    @staticmethod
+    def _find_override(overrides: dict[str, dict], product_name: str) -> dict | None:
+        """Find override entry by exact match or substring match."""
+        if not overrides:
+            return None
+        # Exact match
+        if product_name in overrides:
+            return overrides[product_name]
+        # Substring match (product_name contains override key or vice versa)
+        for key, value in overrides.items():
+            if key in product_name or product_name in key:
+                return value
+        return None
+
+    # Conditions excluded from resale calculation (broken/parts-only)
+    EXCLUDED_CONDITIONS = {"worn"}
+
     @staticmethod
     def _get_resale_data(conn: sqlite3.Connection, product_id: int) -> dict:
-        """Get resale statistics from the resale_transactions table."""
+        """Get resale statistics from the resale_transactions table.
+
+        Groups by yearly buckets (1yr/2yr/3yr+), uses median prices,
+        and excludes worn/broken items for representative pricing.
+        """
         rows = conn.execute(
             """SELECT sale_price, months_since_release, condition, listing_date
                FROM resale_transactions WHERE product_id = ?""",
@@ -217,39 +348,51 @@ class TCOCalculator:
         ).fetchall()
 
         if not rows:
-            return {"resale_value_24mo": 0, "curve": {}}
+            return {
+                "resale_value_1yr": 0,
+                "resale_value_2yr": 0,
+                "resale_value_3yr_plus": 0,
+                "curve": {},
+            }
 
-        # Group by age buckets for retention curve
-        buckets: dict[str, list[int]] = {"6mo": [], "12mo": [], "18mo": [], "24mo": []}
+        # Group by yearly buckets, excluding worn/broken items
+        buckets: dict[str, list[int]] = {"1yr": [], "2yr": [], "3yr_plus": []}
         for row in rows:
             months = row["months_since_release"]
             if months is None:
                 continue
+            if row["condition"] in TCOCalculator.EXCLUDED_CONDITIONS:
+                continue
             price = row["sale_price"]
-            if months <= 9:
-                buckets["6mo"].append(price)
-            elif months <= 15:
-                buckets["12mo"].append(price)
-            elif months <= 21:
-                buckets["18mo"].append(price)
+            if months <= 18:
+                buckets["1yr"].append(price)
             elif months <= 30:
-                buckets["24mo"].append(price)
+                buckets["2yr"].append(price)
+            else:
+                buckets["3yr_plus"].append(price)
 
-        # Resale value at 24mo
-        resale_24mo = int(mean(buckets["24mo"])) if buckets["24mo"] else 0
+        def _median_or_zero(prices: list[int]) -> int:
+            return int(median(prices)) if prices else 0
 
-        # If no 24mo data, try to extrapolate from available data
-        if resale_24mo == 0:
-            all_prices = [row["sale_price"] for row in rows]
-            if all_prices:
-                resale_24mo = int(mean(all_prices) * 0.45)  # Conservative estimate
+        resale_1yr = _median_or_zero(buckets["1yr"])
+        resale_2yr = _median_or_zero(buckets["2yr"])
+        resale_3yr_plus = _median_or_zero(buckets["3yr_plus"])
+
+        # If no 2yr data, estimate from available data
+        if resale_2yr == 0:
+            usable = [row["sale_price"] for row in rows
+                      if row["condition"] not in TCOCalculator.EXCLUDED_CONDITIONS]
+            if usable:
+                resale_2yr = int(median(usable) * 0.45)  # Conservative estimate
 
         curve = {}
         for key, prices in buckets.items():
-            curve[key] = round(mean(prices), 0) if prices else None
+            curve[key] = int(median(prices)) if prices else None
 
         return {
-            "resale_value_24mo": resale_24mo,
+            "resale_value_1yr": resale_1yr,
+            "resale_value_2yr": resale_2yr,
+            "resale_value_3yr_plus": resale_3yr_plus,
             "curve": curve,
         }
 

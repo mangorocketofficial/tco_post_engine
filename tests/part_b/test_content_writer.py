@@ -87,10 +87,16 @@ def mock_enrichment_response() -> str:
                 "answer": "24개월 사용 기준 구매가의 47~50% 수준입니다.",
             },
         ],
+        "category_criteria": {
+            "myth_busting": "흡입력 7,000Pa vs 11,000Pa 실제 픽업률 차이 1~2%에 불과합니다.",
+            "real_differentiator": "진짜 차별점은 흡입력이 아니라 물걸레 위생 관리입니다.",
+            "decision_fork": "전선/양말이 많은 집은 카메라 AI가 필수, 깔끔한 집은 LiDAR만으로 충분합니다.",
+        },
         "products": [
             {
                 "product_id": "roborock-q-revo-s",
                 "highlight": "3년 실질비용 최저 — 가성비 끝판왕",
+                "slot_label": "최소 비용 실속",
                 "verdict": "recommend",
                 "recommendation_reason": "3년 실질비용 534,000원으로 비교 제품 중 가장 낮습니다.",
                 "caution_reason": "센서 오류 발생률 25%로 주의 필요",
@@ -98,6 +104,7 @@ def mock_enrichment_response() -> str:
             {
                 "product_id": "samsung-bespoke-jet-ai",
                 "highlight": "AS 3.1일 — 국내 AS 최강",
+                "slot_label": "고장 스트레스 제로",
                 "verdict": "recommend",
                 "recommendation_reason": "삼성 AS 네트워크 덕분에 평균 3.1일 만에 수리 완료됩니다.",
                 "caution_reason": "구매가 대비 3년 비용이 685,000원으로 중간 수준",
@@ -105,6 +112,7 @@ def mock_enrichment_response() -> str:
             {
                 "product_id": "ecovacs-x2-combo",
                 "highlight": "핸디청소기 겸용 올인원",
+                "slot_label": "풀옵션 올인원",
                 "verdict": "caution",
                 "recommendation_reason": "핸디청소기 겸용으로 별도 구매 비용 절감 가능",
                 "caution_reason": "3년 실질비용 910,000원으로 가장 높고 AS 8.5일 소요",
@@ -236,6 +244,33 @@ class TestEnrichmentParsing:
         assert "배터리" in faq.question
         assert faq.answer != ""
 
+    def test_category_criteria_parsed(self, writer, mock_enrichment_response):
+        result = writer._parse_enrichment_response(mock_enrichment_response)
+
+        cc = result["category_criteria"]
+        assert cc is not None
+        assert "흡입력" in cc.myth_busting
+        assert "물걸레" in cc.real_differentiator
+        assert "카메라 AI" in cc.decision_fork
+
+    def test_category_criteria_none_when_missing(self, writer):
+        response = json.dumps({
+            "situation_picks": [],
+            "home_types": [],
+            "faqs": [],
+            "products": [],
+        })
+        result = writer._parse_enrichment_response(response)
+        assert result["category_criteria"] is None
+
+    def test_slot_label_parsed(self, writer, mock_enrichment_response):
+        result = writer._parse_enrichment_response(mock_enrichment_response)
+        pe = result["product_enrichment"]
+
+        assert pe["roborock-q-revo-s"]["slot_label"] == "최소 비용 실속"
+        assert pe["samsung-bespoke-jet-ai"]["slot_label"] == "고장 스트레스 제로"
+        assert pe["ecovacs-x2-combo"]["slot_label"] == "풀옵션 올인원"
+
 
 # === Test: Data Building (No Fabrication) ===
 
@@ -250,7 +285,9 @@ class TestDataBuilding:
         assert roborock.name == "로보락 Q Revo S"
         assert roborock.tco.purchase_price_avg == 899000  # Exact from fixture
         assert roborock.tco.purchase_price_min == 849000
-        assert roborock.tco.resale_value_24mo == 450000
+        assert roborock.tco.resale_value_1yr == 650000
+        assert roborock.tco.resale_value_2yr == 450000
+        assert roborock.tco.resale_value_3yr_plus == 315000
         assert roborock.tco.expected_repair_cost == 85000
         assert roborock.tco.real_cost_3yr == 534000
         assert roborock.tco.as_turnaround_days == 5.2
@@ -271,8 +308,8 @@ class TestDataBuilding:
 
         roborock = products[0]
         assert roborock.resale_curve is not None
-        assert roborock.resale_curve.mo_6 == 85
-        assert roborock.resale_curve.mo_24 == 50
+        assert roborock.resale_curve.yr_1 == 72
+        assert roborock.resale_curve.yr_3_plus == 35
 
     def test_build_products_preserves_repair_stats(self, writer, sample_tco_dict, mock_enrichment_response):
         enrichment = writer._parse_enrichment_response(mock_enrichment_response)
@@ -290,6 +327,22 @@ class TestDataBuilding:
         roborock = products[0]
         assert len(roborock.maintenance_tasks) == 2
         assert roborock.maintenance_tasks[0].task == "먼지통 비우기"
+
+    def test_build_products_preserves_automated_flag(self, writer, sample_tco_dict, mock_enrichment_response):
+        enrichment = writer._parse_enrichment_response(mock_enrichment_response)
+        products = writer._build_products(sample_tco_dict["products"], enrichment)
+
+        roborock = products[0]
+        assert roborock.maintenance_tasks[0].automated is True  # 먼지통 비우기
+        assert roborock.maintenance_tasks[1].automated is False  # 필터 세척
+
+    def test_build_products_applies_slot_label(self, writer, sample_tco_dict, mock_enrichment_response):
+        enrichment = writer._parse_enrichment_response(mock_enrichment_response)
+        products = writer._build_products(sample_tco_dict["products"], enrichment)
+
+        assert products[0].slot_label == "최소 비용 실속"
+        assert products[1].slot_label == "고장 스트레스 제로"
+        assert products[2].slot_label == "풀옵션 올인원"
 
     def test_all_products_built(self, writer, sample_tco_dict, mock_enrichment_response):
         enrichment = writer._parse_enrichment_response(mock_enrichment_response)
@@ -363,6 +416,8 @@ class TestEndToEnd:
         assert len(blog_data.home_types) == 3
         assert len(blog_data.faqs) == 3
         assert blog_data.credibility.total_review_count > 0
+        assert blog_data.category_criteria is not None
+        assert blog_data.category_criteria.myth_busting != ""
 
     @patch.object(ContentWriter, "_call_llm")
     def test_generate_from_path(self, mock_llm, sample_tco_path, mock_enrichment_response):
@@ -401,7 +456,9 @@ class TestEndToEnd:
             raw = sample_tco_dict["products"][i]["tco"]
             assert product.tco.purchase_price_avg == raw["purchase_price_avg"]
             assert product.tco.purchase_price_min == raw["purchase_price_min"]
-            assert product.tco.resale_value_24mo == raw["resale_value_24mo"]
+            assert product.tco.resale_value_1yr == raw["resale_value_1yr"]
+            assert product.tco.resale_value_2yr == raw["resale_value_2yr"]
+            assert product.tco.resale_value_3yr_plus == raw["resale_value_3yr_plus"]
             assert product.tco.expected_repair_cost == raw["expected_repair_cost"]
             assert product.tco.real_cost_3yr == raw["real_cost_3yr"]
             assert product.tco.as_turnaround_days == raw["as_turnaround_days"]

@@ -27,9 +27,16 @@ class TCOExporter:
         exporter.export_category("로봇청소기")
     """
 
-    def __init__(self, config: Config | None = None) -> None:
+    def __init__(
+        self,
+        config: Config | None = None,
+        a2_data_path: str | Path | None = None,
+        a3_data_path: str | Path | None = None,
+    ) -> None:
         self.config = config or Config()
-        self._calculator = TCOCalculator(self.config)
+        self._calculator = TCOCalculator(
+            self.config, a2_data_path=a2_data_path, a3_data_path=a3_data_path
+        )
         self._export_dir = _PROJECT_ROOT / "data" / "exports"
 
     def export_category(

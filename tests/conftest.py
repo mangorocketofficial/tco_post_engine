@@ -62,7 +62,9 @@ def sample_tco_data() -> dict:
     return {
         "purchase_price_avg": 1_490_000,
         "purchase_price_min": 1_290_000,
-        "resale_value_24mo": 650_000,
+        "resale_value_1yr": 1_010_000,
+        "resale_value_2yr": 650_000,
+        "resale_value_3yr_plus": 450_000,
         "expected_repair_cost": 180_000,
         "real_cost_3yr": 1_020_000,  # 1_490_000 + 180_000 - 650_000
         "as_turnaround_days": 7.5,

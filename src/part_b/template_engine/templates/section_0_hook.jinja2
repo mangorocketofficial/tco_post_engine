@@ -1,10 +1,8 @@
-{# Section 0: Hook - 1-minute Summary #}
-## {{ category }} 추천 TOP 3 (1분 요약)
-
-**3년간 실제 비용**을 따져본 결과, 상황별 추천 모델을 정리했습니다.
+{# Section 0: Hook - Conclusion First #}
+## 🚀 1분 요약: {{ category }}는 뭘 사야 할까?
 
 {% for pick in situation_picks %}
-- **{{ pick.situation }}**: {{ pick.product_name }} ({{ pick.reason }})
+✅ **{{ pick.situation }}**: {{ pick.product_name }} ({{ pick.reason }})
 {% endfor %}
 
 > 아래에서 각 제품의 **3년 실사용 비용** 비교표와 상세 분석을 확인하세요.

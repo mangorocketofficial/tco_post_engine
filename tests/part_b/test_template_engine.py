@@ -14,9 +14,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.part_b.template_engine import (
     BlogPostData,
+    CategoryCriteria,
     CredibilityStats,
     FAQ,
     HomeType,
+    MaintenanceTask,
     PriceVolatility,
     Product,
     ResaleCurve,
@@ -34,7 +36,9 @@ def sample_tco_data() -> TCOData:
     return TCOData(
         purchase_price_avg=899000,
         purchase_price_min=849000,
-        resale_value_24mo=450000,
+        resale_value_1yr=650000,
+        resale_value_2yr=450000,
+        resale_value_3yr_plus=315000,
         expected_repair_cost=85000,
         real_cost_3yr=534000,
         as_turnaround_days=5.2,
@@ -51,9 +55,14 @@ def sample_product(sample_tco_data: TCOData) -> Product:
         brand="테스트브랜드",
         release_date="2024-01-01",
         tco=sample_tco_data,
-        resale_curve=ResaleCurve(mo_6=85, mo_12=72, mo_18=60, mo_24=50),
+        resale_curve=ResaleCurve(yr_1=72, yr_2=50, yr_3_plus=35),
+        maintenance_tasks=[
+            MaintenanceTask(task="먼지통 비우기", frequency_per_month=4, minutes_per_task=1, automated=True),
+            MaintenanceTask(task="필터 세척", frequency_per_month=2, minutes_per_task=3, automated=False),
+        ],
         cta_link="https://example.com/test",
         highlight="테스트 추천 포인트",
+        slot_label="테스트 슬롯",
         verdict="recommend",
         recommendation_reason="테스트 추천 이유입니다.",
     )
@@ -95,6 +104,11 @@ def sample_blog_data(sample_product: Product) -> BlogPostData:
             repair_data_count=40,
             as_review_count=20,
             maintenance_data_count=15,
+        ),
+        category_criteria=CategoryCriteria(
+            myth_busting="흡입력 수치보다 실제 픽업률이 중요합니다.",
+            real_differentiator="물걸레 위생 관리가 진짜 차별점입니다.",
+            decision_fork="전선이 많은 집은 카메라 AI가 필수입니다.",
         ),
         price_volatility=PriceVolatility(
             min_diff="10,000",
@@ -208,7 +222,7 @@ class TestBlogPostRendering:
         # Check all sections are present
         assert "1분 요약" in result  # Section 0
         assert "신뢰할 수 있는 이유" in result  # Section 1
-        assert "흔히 하는 실수" in result  # Section 2
+        assert "진짜 중요한 기준" in result  # Section 2
         assert "한눈에 보는 추천" in result  # Section 3
         assert "상세 분석" in result  # Section 4
         assert "지금 확인해야 하는 이유" in result  # Section 5
@@ -225,7 +239,9 @@ class TestBlogPostRendering:
                 tco=TCOData(
                     purchase_price_avg=1000000 * (i + 1),
                     purchase_price_min=900000 * (i + 1),
-                    resale_value_24mo=500000 * (i + 1),
+                    resale_value_1yr=700000 * (i + 1),
+                    resale_value_2yr=500000 * (i + 1),
+                    resale_value_3yr_plus=350000 * (i + 1),
                     expected_repair_cost=50000 * (i + 1),
                     real_cost_3yr=550000 * (i + 1),
                     as_turnaround_days=3.0 + i,
@@ -301,7 +317,9 @@ class TestTCODataLoading:
                     "tco": {
                         "purchase_price_avg": 899000,
                         "purchase_price_min": 849000,
-                        "resale_value_24mo": 450000,
+                        "resale_value_1yr": 650000,
+                        "resale_value_2yr": 450000,
+                        "resale_value_3yr_plus": 315000,
                         "expected_repair_cost": 85000,
                         "real_cost_3yr": 534000,
                         "as_turnaround_days": 5.2,
@@ -342,7 +360,9 @@ class TestDataModels:
         tco = TCOData(
             purchase_price_avg=900000,
             purchase_price_min=850000,
-            resale_value_24mo=450000,
+            resale_value_1yr=650000,
+            resale_value_2yr=450000,
+            resale_value_3yr_plus=315000,
             expected_repair_cost=80000,
             real_cost_3yr=530000,
             as_turnaround_days=5.0,
@@ -354,12 +374,12 @@ class TestDataModels:
 
     def test_resale_curve_to_dict(self):
         """Test ResaleCurve to_dict method."""
-        curve = ResaleCurve(mo_6=85, mo_12=72, mo_18=60, mo_24=50)
+        curve = ResaleCurve(yr_1=72, yr_2=50, yr_3_plus=35)
         result = curve.to_dict()
 
-        assert result["6mo"] == 85
-        assert result["12mo"] == 72
-        assert result["24mo"] == 50
+        assert result["1yr"] == 72
+        assert result["2yr"] == 50
+        assert result["3yr_plus"] == 35
 
     def test_blog_post_data_to_template_context(self, sample_blog_data: BlogPostData):
         """Test BlogPostData to_template_context method."""
@@ -370,6 +390,29 @@ class TestDataModels:
         assert "products" in context
         assert "faqs" in context
         assert context["total_review_count"] == 100
+
+    def test_automation_rate_calculation(self, sample_blog_data: BlogPostData):
+        """Test automation_rate is calculated from maintenance tasks."""
+        context = sample_blog_data.to_template_context()
+        product = context["products"][0]
+
+        # 1 automated out of 2 tasks = 50%
+        assert product["automation_rate"] == 50
+
+    def test_category_criteria_in_context(self, sample_blog_data: BlogPostData):
+        """Test category_criteria is included in template context."""
+        context = sample_blog_data.to_template_context()
+
+        assert context["category_criteria"] is not None
+        assert "흡입력" in context["category_criteria"]["myth_busting"]
+        assert "물걸레" in context["category_criteria"]["real_differentiator"]
+
+    def test_slot_label_in_context(self, sample_blog_data: BlogPostData):
+        """Test slot_label is included in product context."""
+        context = sample_blog_data.to_template_context()
+        product = context["products"][0]
+
+        assert product["slot_label"] == "테스트 슬롯"
 
 
 class TestEdgeCases:
@@ -415,7 +458,9 @@ class TestEdgeCases:
             tco=TCOData(
                 purchase_price_avg=12345678,
                 purchase_price_min=11234567,
-                resale_value_24mo=6000000,
+                resale_value_1yr=8500000,
+                resale_value_2yr=6000000,
+                resale_value_3yr_plus=4000000,
                 expected_repair_cost=500000,
                 real_cost_3yr=6845678,
                 as_turnaround_days=4.5,

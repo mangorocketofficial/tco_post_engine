@@ -48,7 +48,7 @@ SAMPLE_MARKDOWN = """# 2026년 로봇청소기 추천 TOP 3 — 3년 실제 비�
 
 데이터 447건을 분석했습니다.
 
-## 2. 고를 때 흔히 하는 실수
+## 로봇청소기 고를 때 진짜 중요한 기준 3가지
 
 스펙만 보면 안 됩니다.
 
@@ -329,7 +329,7 @@ class TestIntegration:
     def test_processor_handles_template_output(self, processor):
         """PostProcessor should handle output from template_engine.render_blog_post."""
         from src.part_b.template_engine.models import (
-            BlogPostData, CredibilityStats, FAQ, HomeType,
+            BlogPostData, CategoryCriteria, CredibilityStats, FAQ, HomeType,
             Product, SituationPick, TCOData,
         )
         from src.part_b.template_engine import render_blog_post
@@ -338,7 +338,9 @@ class TestIntegration:
         tco = TCOData(
             purchase_price_avg=899000,
             purchase_price_min=849000,
-            resale_value_24mo=450000,
+            resale_value_1yr=650000,
+            resale_value_2yr=450000,
+            resale_value_3yr_plus=315000,
             expected_repair_cost=85000,
             real_cost_3yr=534000,
             as_turnaround_days=5.2,
@@ -377,6 +379,11 @@ class TestIntegration:
                 repair_data_count=30,
                 as_review_count=15,
                 maintenance_data_count=5,
+            ),
+            category_criteria=CategoryCriteria(
+                myth_busting="테스트 미신 깨기",
+                real_differentiator="테스트 진짜 차별점",
+                decision_fork="테스트 갈림길",
             ),
         )
 

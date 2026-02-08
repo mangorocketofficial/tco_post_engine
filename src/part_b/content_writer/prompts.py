@@ -69,10 +69,15 @@ def build_enrichment_prompt(
 ```json
 {{
   "situation_picks": [
-    {{"situation": "상황 설명 (예: 가성비 중시)", "product_name": "제품명", "reason": "추천 이유 (TCO 데이터 기반)"}},
-    {{"situation": "상황 설명", "product_name": "제품명", "reason": "추천 이유"}},
-    {{"situation": "상황 설명", "product_name": "제품명", "reason": "추천 이유"}}
+    {{"situation": "상황 설명 (예: 고장 스트레스 싫은 분)", "product_name": "제품명", "reason": "추천 이유 + TCO 핵심 수치 1개 (예: 3년 실비용 606,330원, AS 평균 3일)"}},
+    {{"situation": "상황 설명", "product_name": "제품명", "reason": "추천 이유 + TCO 핵심 수치"}},
+    {{"situation": "상황 설명", "product_name": "제품명", "reason": "추천 이유 + TCO 핵심 수치"}}
   ],
+  "category_criteria": {{
+    "myth_busting": "이 카테고리에서 흔히 비교하는 스펙이 실제로는 큰 차이가 없는 이유 설명 (2-3문장, 카테고리에 특화된 구체적 내용)",
+    "real_differentiator": "이 카테고리에서 진짜 비용 차이를 만드는 숨은 요인 설명 (2-3문장, 3년 실비용에서 어떤 영향을 주는지)",
+    "decision_fork": "집 유형/생활 패턴에 따라 어떤 기준이 중요한지 2-3가지 갈림길 제시 (2-3문장)"
+  }},
   "home_types": [
     {{"type": "집 유형 (예: 소형 원룸)", "recommendation": "추천 내용"}},
     {{"type": "집 유형 (예: 중형 아파트)", "recommendation": "추천 내용"}},
@@ -87,6 +92,7 @@ def build_enrichment_prompt(
     {{
       "product_id": "제품ID",
       "highlight": "핵심 추천 포인트 (한 줄)",
+      "slot_label": "추천 슬롯 라벨 (예: '고장 스트레스 제로', '풀옵션 올인원', '최소 비용 실속')",
       "verdict": "recommend 또는 caution",
       "recommendation_reason": "추천 이유 (2-3문장, TCO 데이터 인용)",
       "caution_reason": "주의점 (1-2문장)"
@@ -96,11 +102,19 @@ def build_enrichment_prompt(
 ```
 
 ## 주의사항
-- situation_picks: 정확히 3개, 각각 다른 상황
+- situation_picks: 정확히 3개, 각각 다른 상황 + 반드시 TCO 핵심 수치 포함
+- category_criteria: 반드시 이 카테고리에 특화된 내용 (일반적인 TCO 공식 설명 금지)
+  - myth_busting: "이 스펙은 의미 없다"를 구체적 데이터로 설명
+  - real_differentiator: 3년 실비용에서 실제 차이를 만드는 숨은 요인
+  - decision_fork: 독자가 자기 상황에 맞는 제품을 고를 수 있게 갈림길 제시
 - home_types: 정확히 3개 (소형/중형/대형)
-- faqs: 3~5개, 본문 내용과 겹치지 않는 새로운 질문
+- faqs: 3~5개
+- **FAQ 중복 금지**: FAQ는 category_criteria(Section 2)에서 다룬 내용을 반복하면 안 됩니다
+- **FAQ 중복 금지**: FAQ는 제품별 추천/주의 분석(Section 4)에서 다룬 내용을 반복하면 안 됩니다
+- FAQ는 새로운 관점의 질문만: 특정 고장 유형, AS 접수 방법, 호환 소모품, 소음, 호환성 등
 - FAQ는 커뮤니티 수리/AS 데이터의 실제 고충에서 도출
 - products: 입력된 모든 제품에 대해 생성
+- slot_label: 각 제품의 포지셔닝을 나타내는 맥락적 라벨 (제네릭한 "안정형" 대신 "고장 스트레스 제로" 같은 구체적 표현)
 - verdict: 3년 실질비용이 가장 낮은 제품은 "recommend", AS 기간이 길거나 수리비가 높은 제품은 "caution"
 - 모든 금액은 원래 데이터 그대로 사용 (절대 변경 금지)
 """
@@ -114,11 +128,12 @@ def _format_products_for_prompt(products_data: list[dict]) -> str:
         lines.append(f"""### {p['name']} ({p['brand']})
 - 평균 구매가: {tco.get('purchase_price_avg', 0):,}원
 - 최저가: {tco.get('purchase_price_min', 0):,}원
-- 24개월 중고가: {tco.get('resale_value_24mo', 0):,}원
+- 1년 내 중고가: {tco.get('resale_value_1yr', 0):,}원
+- 2년 중고가: {tco.get('resale_value_2yr', 0):,}원
+- 3년+ 중고가: {tco.get('resale_value_3yr_plus', 0):,}원
 - 예상 수리비: {tco.get('expected_repair_cost', 0):,}원
 - **3년 실질비용: {tco.get('real_cost_3yr', 0):,}원**
 - AS 평균 소요일: {tco.get('as_turnaround_days', 0)}일
-- 월 관리 시간: {tco.get('monthly_maintenance_minutes', 0)}분
 """)
     return "\n".join(lines)
 

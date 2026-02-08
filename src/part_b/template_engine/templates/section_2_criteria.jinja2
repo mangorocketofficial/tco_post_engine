@@ -1,25 +1,31 @@
-{# Section 2: Criteria Framing - Myth-busting #}
-## {{ category }} 고를 때 흔히 하는 실수
+{# Section 2: Category-Specific Criteria (LLM-generated) #}
+## {{ category }} 고를 때 진짜 중요한 기준 3가지
 
+{% if category_criteria %}
+### 2-1. 흔히 비교하지만 의미 없는 스펙
+
+{{ category_criteria.myth_busting }}
+
+### 2-2. 진짜 차별점은 따로 있습니다
+
+{{ category_criteria.real_differentiator }}
+
+### 2-3. 우리 집 갈림길
+
+{{ category_criteria.decision_fork }}
+
+{% else %}
 ### 2-1. 스펙 ≠ 실사용 경험
 
-많은 분들이 **흡입력 Pa 수치**나 **청소 모드 개수**로 제품을 비교합니다.
-하지만 실제 사용해보면...
-
-- 흡입력 8000Pa vs 6000Pa → 체감 차이 거의 없음
-- 오히려 **소음, 물걸레 세척 방식, AS 대응**이 일상 만족도를 좌우
+스펙 비교만으로는 실제 사용 만족도를 예측하기 어렵습니다.
 
 ### 2-2. 한국 가정에서 진짜 중요한 것
 
-| 항목 | 왜 중요한가 |
-|------|-------------|
-| 문턱 넘기 | 한국 아파트 특유의 방문 턱 |
-| 물걸레 자동세척 | 손 안 대고 위생 유지 |
-| AS 소요일 | 제품 고장 시 며칠 기다려야 하나 |
-| 3년 후 중고가 | 리셀 가치 = 실제 손해 금액 |
+AS 소요일, 유지관리 편의성, 중고 시세가 실사용 비용을 좌우합니다.
 
 ### 2-3. 우리 집 유형별 선택 가이드
 
 {% for home_type in home_types %}
 - **{{ home_type.type }}**: {{ home_type.recommendation }}
 {% endfor %}
+{% endif %}

@@ -1,227 +1,128 @@
-"""3-slot product selection algorithm.
+"""TOP 3 product selector.
 
-Assigns candidates to Stability / Balance / Value slots based on
-weighted scores, implementing the consumer decision architecture.
+Ranks all candidates by total_score and picks the top 3,
+enforcing brand diversity (no duplicate brands).
 """
 
 from __future__ import annotations
 
 import logging
 
-from .models import CandidateProduct, ProductScores, SlotAssignment
+from .models import CandidateProduct, ProductScores, SelectedProduct
 
 logger = logging.getLogger(__name__)
 
 
-class SlotSelector:
-    """Assigns 3 products to Stability/Balance/Value slots.
+class TopSelector:
+    """Selects TOP 3 products by keyword metric score.
 
-    Selection algorithm:
-    - Stability: Premium/Mid tier, max(sentiment*0.6 + resale*0.4)
-    - Balance: Exclude stability, max(search*0.5 + sales*0.3 + sentiment*0.2)
-    - Value: Mid/Budget tier, exclude previous, max(sales*0.4 + (1-price_norm)*0.4 + sentiment*0.2)
+    Enforces brand diversity: if a brand already has a pick,
+    the next-best product from a different brand is chosen.
 
     Usage:
-        selector = SlotSelector()
-        assignments = selector.select(candidates, scores)
+        selector = TopSelector()
+        picks = selector.select(candidates, scores)
     """
 
     def select(
         self,
         candidates: list[CandidateProduct],
         scores: dict[str, ProductScores],
-    ) -> list[SlotAssignment]:
-        """Run the 3-slot selection algorithm.
+        top_n: int = 3,
+    ) -> list[SelectedProduct]:
+        """Select top N products by score with brand diversity.
 
         Args:
-            candidates: List of scored CandidateProduct.
-            scores: Dict mapping product name to ProductScores.
+            candidates: All candidate products.
+            scores: Product name → ProductScores mapping.
+            top_n: Number of products to select (default 3).
 
         Returns:
-            List of 3 SlotAssignment objects [stability, balance, value].
+            List of SelectedProduct, ranked 1 to top_n.
 
         Raises:
-            ValueError: If fewer than 3 eligible candidates.
+            ValueError: If fewer than top_n candidates available.
         """
-        if len(candidates) < 3:
+        if len(candidates) < top_n:
             raise ValueError(
-                f"Need at least 3 candidates for selection, got {len(candidates)}"
+                f"Need at least {top_n} candidates, got {len(candidates)}"
             )
 
-        exclude: set[str] = set()
+        # Sort by total_score descending
+        ranked = sorted(
+            candidates,
+            key=lambda c: scores.get(c.name, ProductScores(product_name=c.name)).total_score,
+            reverse=True,
+        )
 
-        # 1. Stability slot
-        stability = self._select_stability(candidates, scores)
-        exclude.add(stability.candidate.name)
+        picks: list[SelectedProduct] = []
+        used_brands: set[str] = set()
 
-        # 2. Balance slot
-        balance = self._select_balance(candidates, scores, exclude)
-        exclude.add(balance.candidate.name)
+        for c in ranked:
+            if len(picks) >= top_n:
+                break
 
-        # 3. Value slot
-        value = self._select_value(candidates, scores, exclude)
+            # Enforce brand diversity using manufacturer (not product line)
+            if c.manufacturer in used_brands:
+                continue
 
-        assignments = [stability, balance, value]
+            s = scores.get(c.name, ProductScores(product_name=c.name))
+            reasons = _generate_reasons(c, s)
 
-        for a in assignments:
+            picks.append(SelectedProduct(
+                rank=len(picks) + 1,
+                candidate=c,
+                scores=s,
+                selection_reasons=reasons,
+            ))
+            used_brands.add(c.manufacturer)
+
+        # If brand diversity filtered too many, fill remaining without constraint
+        if len(picks) < top_n:
+            selected_names = {p.candidate.name for p in picks}
+            for c in ranked:
+                if len(picks) >= top_n:
+                    break
+                if c.name in selected_names:
+                    continue
+
+                s = scores.get(c.name, ProductScores(product_name=c.name))
+                reasons = _generate_reasons(c, s)
+                reasons.append("(brand diversity relaxed)")
+
+                picks.append(SelectedProduct(
+                    rank=len(picks) + 1,
+                    candidate=c,
+                    scores=s,
+                    selection_reasons=reasons,
+                ))
+                selected_names.add(c.name)
+
+        for p in picks:
             logger.info(
-                "Slot [%s]: %s (%s) — score=%.3f",
-                a.slot.upper(),
-                a.candidate.name,
-                a.candidate.brand,
-                a.scores.weighted_total,
+                "Pick #%d: %s (%s) — score=%.3f",
+                p.rank, p.candidate.name, p.candidate.brand, p.scores.total_score,
             )
 
-        return assignments
+        return picks
 
-    def _select_stability(
-        self,
-        candidates: list[CandidateProduct],
-        scores: dict[str, ProductScores],
-    ) -> SlotAssignment:
-        """Select the stability pick.
 
-        Filter: Premium or Mid tier only.
-        Rank by: sentiment * 0.6 + resale_retention * 0.4
-        """
-        pool = [
-            c for c in candidates
-            if c.price_position and c.price_position.price_tier in ("premium", "mid")
-        ]
-        # Fallback: if no premium/mid, use all
-        if not pool:
-            pool = list(candidates)
+def _generate_reasons(
+    candidate: CandidateProduct,
+    scores: ProductScores,
+) -> list[str]:
+    """Generate human-readable selection reasons."""
+    reasons: list[str] = []
 
-        def stability_score(c: CandidateProduct) -> float:
-            s = scores.get(c.name)
-            if not s:
-                return 0.0
-            return s.sentiment * 0.6 + s.resale_retention * 0.4
+    if candidate.keyword_metrics:
+        km = candidate.keyword_metrics
+        if km.monthly_clicks > 0:
+            reasons.append(f"Monthly clicks: {km.monthly_clicks:,}")
+        if km.avg_cpc > 0:
+            reasons.append(f"Avg CPC: {km.avg_cpc:,}원")
+        if km.monthly_search_volume > 0:
+            reasons.append(f"Monthly searches: {km.monthly_search_volume:,}")
+        reasons.append(f"Competition: {km.competition}")
 
-        pick = max(pool, key=stability_score)
-        s = scores[pick.name]
-
-        reasons = self._generate_reasons("stability", pick, s)
-
-        return SlotAssignment(
-            slot="stability",
-            candidate=pick,
-            scores=s,
-            selection_reasons=reasons,
-        )
-
-    def _select_balance(
-        self,
-        candidates: list[CandidateProduct],
-        scores: dict[str, ProductScores],
-        exclude: set[str],
-    ) -> SlotAssignment:
-        """Select the balance pick.
-
-        Exclude: stability pick.
-        Rank by: search_interest * 0.5 + sales_presence * 0.3 + sentiment * 0.2
-        """
-        pool = [c for c in candidates if c.name not in exclude]
-
-        def balance_score(c: CandidateProduct) -> float:
-            s = scores.get(c.name)
-            if not s:
-                return 0.0
-            return s.search_interest * 0.5 + s.sales_presence * 0.3 + s.sentiment * 0.2
-
-        pick = max(pool, key=balance_score)
-        s = scores[pick.name]
-
-        reasons = self._generate_reasons("balance", pick, s)
-
-        return SlotAssignment(
-            slot="balance",
-            candidate=pick,
-            scores=s,
-            selection_reasons=reasons,
-        )
-
-    def _select_value(
-        self,
-        candidates: list[CandidateProduct],
-        scores: dict[str, ProductScores],
-        exclude: set[str],
-    ) -> SlotAssignment:
-        """Select the value pick.
-
-        Filter: Mid or Budget tier only. Exclude: stability + balance picks.
-        Rank by: sales_presence * 0.4 + (1 - price_normalized) * 0.4 + sentiment * 0.2
-        """
-        pool = [
-            c for c in candidates
-            if c.name not in exclude
-            and (
-                not c.price_position
-                or c.price_position.price_tier in ("mid", "budget")
-            )
-        ]
-        # Fallback: if no mid/budget, use all remaining
-        if not pool:
-            pool = [c for c in candidates if c.name not in exclude]
-
-        def value_score(c: CandidateProduct) -> float:
-            s = scores.get(c.name)
-            if not s:
-                return 0.0
-            return (
-                s.sales_presence * 0.4
-                + (1.0 - s.price_normalized) * 0.4
-                + s.sentiment * 0.2
-            )
-
-        pick = max(pool, key=value_score)
-        s = scores[pick.name]
-
-        reasons = self._generate_reasons("value", pick, s)
-
-        return SlotAssignment(
-            slot="value",
-            candidate=pick,
-            scores=s,
-            selection_reasons=reasons,
-        )
-
-    @staticmethod
-    def _generate_reasons(
-        slot: str,
-        candidate: CandidateProduct,
-        scores: ProductScores,
-    ) -> list[str]:
-        """Generate human-readable selection reasons."""
-        reasons: list[str] = []
-
-        if slot == "stability":
-            if candidate.sentiment:
-                reasons.append(
-                    f"Complaint rate: {candidate.sentiment.complaint_rate:.2f}"
-                )
-            if candidate.resale_check:
-                reasons.append(
-                    f"Resale ratio: {candidate.resale_check.resale_ratio:.2f}"
-                )
-            reasons.append(f"Sentiment score: {scores.sentiment:.2f}")
-
-        elif slot == "balance":
-            reasons.append(f"Search interest score: {scores.search_interest:.2f}")
-            reasons.append(f"Sales presence score: {scores.sales_presence:.2f}")
-            if candidate.search_interest:
-                reasons.append(
-                    f"Trend: {candidate.search_interest.trend_direction}"
-                )
-
-        elif slot == "value":
-            if candidate.price_position:
-                reasons.append(
-                    f"Price tier: {candidate.price_position.price_tier} "
-                    f"({candidate.price_position.current_price:,}원)"
-                )
-            reasons.append(f"Sales presence score: {scores.sales_presence:.2f}")
-            reasons.append(f"Price advantage: {1.0 - scores.price_normalized:.2f}")
-
-        reasons.append(f"Presence on {candidate.presence_score} platforms")
-        return reasons
+    reasons.append(f"Total score: {scores.total_score:.3f}")
+    return reasons

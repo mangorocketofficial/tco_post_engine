@@ -22,6 +22,7 @@ from src.common.config import Settings, get_anthropic_api_key, get_openai_api_ke
 from src.common.logging import setup_logging
 from src.part_b.template_engine.models import (
     BlogPostData,
+    CategoryCriteria,
     CredibilityStats,
     FAQ,
     HomeType,
@@ -119,6 +120,7 @@ class ContentWriter:
             home_types=enrichment.get("home_types_parsed", []),
             faqs=enrichment.get("faqs_parsed", []),
             credibility=credibility,
+            category_criteria=enrichment.get("category_criteria"),
             price_volatility=price_volatility,
             price_updated_date=datetime.now().strftime("%Y-%m-%d"),
         )
@@ -292,6 +294,17 @@ class ContentWriter:
             for faq in data.get("faqs", [])
         ]
 
+        # Category criteria
+        cc = data.get("category_criteria", {})
+        if cc:
+            result["category_criteria"] = CategoryCriteria(
+                myth_busting=cc.get("myth_busting", ""),
+                real_differentiator=cc.get("real_differentiator", ""),
+                decision_fork=cc.get("decision_fork", ""),
+            )
+        else:
+            result["category_criteria"] = None
+
         # Per-product enrichment
         result["product_enrichment"] = {
             pe.get("product_id", ""): pe
@@ -307,6 +320,7 @@ class ContentWriter:
             "home_types_parsed": [],
             "faqs_parsed": [],
             "product_enrichment": {},
+            "category_criteria": None,
         }
 
     # --- Data Building ---
@@ -339,7 +353,9 @@ class ContentWriter:
             tco = TemplateTCOData(
                 purchase_price_avg=tco_raw.get("purchase_price_avg", 0),
                 purchase_price_min=tco_raw.get("purchase_price_min", 0),
-                resale_value_24mo=tco_raw.get("resale_value_24mo", 0),
+                resale_value_1yr=tco_raw.get("resale_value_1yr", 0),
+                resale_value_2yr=tco_raw.get("resale_value_2yr", 0),
+                resale_value_3yr_plus=tco_raw.get("resale_value_3yr_plus", 0),
                 expected_repair_cost=tco_raw.get("expected_repair_cost", 0),
                 real_cost_3yr=tco_raw.get("real_cost_3yr", 0),
                 as_turnaround_days=tco_raw.get("as_turnaround_days", 0),
@@ -351,10 +367,9 @@ class ContentWriter:
             resale_curve = None
             if resale_raw:
                 resale_curve = TemplateResaleCurve(
-                    mo_6=resale_raw.get("6mo", 0),
-                    mo_12=resale_raw.get("12mo", 0),
-                    mo_18=resale_raw.get("18mo", 0),
-                    mo_24=resale_raw.get("24mo", 0),
+                    yr_1=resale_raw.get("1yr", 0),
+                    yr_2=resale_raw.get("2yr", 0),
+                    yr_3_plus=resale_raw.get("3yr_plus", 0),
                 )
 
             # Build repair stats (from Part A)
@@ -380,6 +395,7 @@ class ContentWriter:
                     task=mt.get("task", ""),
                     frequency_per_month=mt.get("frequency_per_month", 0),
                     minutes_per_task=mt.get("minutes_per_task", 0),
+                    automated=mt.get("automated"),
                 )
                 for mt in p.get("maintenance_tasks", [])
             ]
@@ -397,6 +413,7 @@ class ContentWriter:
                 repair_stats=repair_stats,
                 maintenance_tasks=maintenance_tasks,
                 highlight=pe.get("highlight", ""),
+                slot_label=pe.get("slot_label", ""),
                 verdict=pe.get("verdict", "recommend"),
                 recommendation_reason=pe.get("recommendation_reason", ""),
                 caution_reason=pe.get("caution_reason", ""),

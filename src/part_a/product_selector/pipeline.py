@@ -1,7 +1,10 @@
-"""End-to-end product selection pipeline.
+"""Product selection pipeline.
 
-Orchestrates: data collection → aggregation → enrichment → scoring →
-slot assignment → validation → output.
+Simplified 4-step pipeline:
+1. Naver Shopping API → candidate product list
+2. Naver Search Ad API → keyword metrics per product
+3. Score & rank → TOP 3 by affiliate value
+4. Validate (brand diversity)
 
 Usage:
     pipeline = ProductSelectionPipeline(category_config)
@@ -11,44 +14,37 @@ Usage:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 from datetime import date
 
 from ..common.config import Config
 from ..database.connection import get_connection
-from .candidate_aggregator import CandidateAggregator
 from .category_config import CategoryConfig
-from .models import CandidateProduct, SelectionResult
-from .price_classifier import PriceClassifier
-from .resale_quick_checker import ResaleQuickChecker
-from .sales_ranking_scraper import (
-    CoupangRankingScraper,
-    DanawaRankingScraper,
-    NaverShoppingRankingScraper,
+from .models import (
+    CandidateProduct,
+    KeywordMetrics,
+    SelectionResult,
+    ValidationResult,
+    extract_manufacturer,
 )
-from .danawa_category_resolver import DanawaCategoryResolver
+from .naver_ad_client import NaverAdClient
+from .sales_ranking_scraper import NaverShoppingRankingScraper
 from .scorer import ProductScorer
-from .search_interest_scraper import NaverDataLabScraper
-from .sentiment_scraper import SentimentScraper
-from .slot_selector import SlotSelector
-from .validator import SelectionValidator
+from .slot_selector import TopSelector
 
 logger = logging.getLogger(__name__)
 
 
 class ProductSelectionPipeline:
-    """End-to-end product selection pipeline.
+    """Product selection pipeline.
 
     Steps:
-    1. Collect sales rankings from platforms
-    2. Aggregate into candidate pool
-    3. Collect search interest for candidates
-    4. Classify price tiers
-    5. Score all candidates
-    6. Assign to 3 slots
-    7. Validate and fix if needed
-    8. Build SelectionResult
+    1. Discover candidates via Naver Shopping API
+    2. Fetch keyword metrics via Naver Search Ad API
+    3. Score and select TOP 3
+    4. Validate
 
     Usage:
         pipeline = ProductSelectionPipeline(category_config)
@@ -64,190 +60,164 @@ class ProductSelectionPipeline:
         self.config = config or Config()
 
     def run(self) -> SelectionResult:
-        """Execute the full pipeline.
+        """Execute the pipeline.
 
         Returns:
             SelectionResult with selected products and validation.
         """
-        keyword = self.category_config.search_terms[0] if self.category_config.search_terms else ""
+        keyword = (
+            self.category_config.search_terms[0]
+            if self.category_config.search_terms
+            else ""
+        )
         logger.info("=== Product Selection Pipeline: %s ===", keyword)
 
-        # Step 1: Collect sales rankings
-        logger.info("Step 1: Collecting sales rankings...")
-        naver, danawa, coupang = self._collect_sales_rankings(keyword)
-
-        # Step 2: Aggregate into candidate pool
-        logger.info("Step 2: Aggregating candidates...")
-        active_sources = sum(1 for src in (naver, danawa, coupang) if src)
-        min_presence = min(2, active_sources)  # need ≥2 platforms, but relax if only 1 source
-        aggregator = CandidateAggregator()
-        candidates = aggregator.aggregate(
-            naver, danawa, coupang,
-            category=keyword,
-            min_presence=min_presence,
-        )
-        logger.info("Candidate pool: %d products", len(candidates))
+        # Step 1: Discover candidates from Naver Shopping
+        logger.info("Step 1: Discovering candidates from Naver Shopping...")
+        candidates = self._discover_candidates(keyword)
+        logger.info("Found %d candidates", len(candidates))
 
         if len(candidates) < 3:
             raise ValueError(
                 f"Only {len(candidates)} candidates found (need >= 3). "
-                "Try broader search terms or lower min_presence."
+                "Check Naver API keys or try broader search terms."
             )
 
-        # Steps 3-4: Enrichment (each step is optional — failures don't stop the pipeline)
-        for step_num, step_name, step_fn in [
-            (3, "search interest", self._collect_search_interest),
-            (4, "price tiers", self._classify_prices),
-        ]:
-            logger.info("Step %d: Collecting %s...", step_num, step_name)
-            try:
-                step_fn(candidates)
-            except Exception:
-                logger.warning(
-                    "Step %d (%s) failed, continuing without it",
-                    step_num, step_name, exc_info=True,
-                )
+        # Step 2: Fetch keyword metrics
+        logger.info("Step 2: Fetching keyword metrics from Naver Search Ad...")
+        self._fetch_keyword_metrics(candidates)
 
-        # Step 5: Score candidates
-        logger.info("Step 5: Scoring candidates...")
+        # Step 3: Score and select TOP 3
+        logger.info("Step 3: Scoring and selecting TOP 3...")
         scorer = ProductScorer()
         scores = scorer.score_candidates(candidates)
 
-        # Step 6: Assign to 3 slots
-        logger.info("Step 6: Assigning to slots...")
-        selector = SlotSelector()
-        assignments = selector.select(candidates, scores)
+        selector = TopSelector()
+        picks = selector.select(candidates, scores)
 
-        # Step 7: Validate and fix
-        logger.info("Step 7: Validating selection...")
-        validator = SelectionValidator(self.category_config)
-        assignments, validations = validator.validate_and_fix(
-            assignments, candidates, scores
-        )
+        # Step 4: Validate
+        logger.info("Step 4: Validating...")
+        validations = self._validate(picks)
 
-        # Step 8: Build result
         result = SelectionResult(
             category=keyword,
             selection_date=date.today(),
             data_sources={
-                "sales_rankings": ["naver_shopping", "danawa"],
-                "search_volume": "naver_datalab",
-                "price_data": "danawa",
+                "candidates": "naver_shopping_api",
+                "scoring": "naver_searchad_api",
             },
             candidate_pool_size=len(candidates),
-            selected_products=assignments,
+            selected_products=picks,
             validation=validations,
         )
 
         logger.info("=== Pipeline complete ===")
         return result
 
-    def _collect_sales_rankings(self, keyword: str) -> tuple[list, list, list]:
-        """Collect from Naver, Danawa, Coupang.
-
-        Each scraper failure is caught gracefully — the pipeline
-        continues with whichever sources succeed.
-        """
-        # Naver Shopping (API)
+    def _discover_candidates(self, keyword: str) -> list[CandidateProduct]:
+        """Get candidate products from Naver Shopping API."""
         try:
             with NaverShoppingRankingScraper(self.config) as scraper:
-                naver = scraper.get_best_products(keyword)
+                entries = scraper.get_best_products(keyword)
         except Exception:
-            logger.warning("Naver Shopping scraper failed, continuing without it", exc_info=True)
-            naver = []
-
-        # Danawa
-        danawa_code = self.category_config.danawa_category_code
-        if not danawa_code:
-            logger.info("No Danawa category code configured, attempting auto-resolve...")
-            try:
-                with DanawaCategoryResolver(self.config) as resolver:
-                    danawa_code = resolver.resolve(keyword)
-            except Exception:
-                logger.warning("Danawa category auto-resolve failed", exc_info=True)
-            if danawa_code:
-                self.category_config.danawa_category_code = danawa_code
-                logger.info("Auto-resolved Danawa category code: %s", danawa_code)
-            else:
-                logger.warning("Could not auto-resolve Danawa category code, skipping")
-
-        if danawa_code:
-            try:
-                with DanawaRankingScraper(self.config) as scraper:
-                    danawa = scraper.get_popular_products(danawa_code)
-            except Exception:
-                logger.warning("Danawa scraper failed, continuing without it", exc_info=True)
-                danawa = []
-        else:
-            danawa = []
-
-        # Coupang — disabled until official API is available
-        # try:
-        #     with CoupangRankingScraper(self.config) as scraper:
-        #         coupang = scraper.get_best_sellers(keyword)
-        # except Exception:
-        #     logger.warning("Coupang scraper failed, continuing without it", exc_info=True)
-        #     coupang = []
-        coupang = []
-
-        total = len(naver) + len(danawa) + len(coupang)
-        if total == 0:
+            logger.error("Naver Shopping API failed", exc_info=True)
             raise RuntimeError(
-                "All sales ranking scrapers failed. "
-                "Check API keys (NAVER_DATALAB_CLIENT_ID/SECRET) and network."
+                "Failed to fetch candidates from Naver Shopping. "
+                "Check API keys (NAVER_CLIENT_ID / NAVER_CLIENT_SECRET)."
             )
 
-        return naver, danawa, coupang
-
-    def _collect_search_interest(
-        self, candidates: list[CandidateProduct]
-    ) -> None:
-        """Populate search_interest on each candidate (in-place)."""
-        names = [c.name for c in candidates]
-        with NaverDataLabScraper(self.config) as scraper:
-            interests = scraper.get_search_interest(names)
-
-        interest_map = {si.product_name: si for si in interests}
-        for c in candidates:
-            c.search_interest = interest_map.get(c.name)
-
-    def _collect_sentiment(
-        self, candidates: list[CandidateProduct]
-    ) -> None:
-        """Populate sentiment on each candidate (in-place)."""
-        names = [c.name for c in candidates]
-        with SentimentScraper(self.config) as scraper:
-            sentiments = scraper.get_sentiment_batch(
-                names,
-                negative_keywords=self.category_config.negative_keywords,
-                positive_keywords=self.category_config.positive_keywords,
+        if not entries:
+            raise RuntimeError(
+                f"No products found for '{keyword}' on Naver Shopping."
             )
 
-        sentiment_map = {s.product_name: s for s in sentiments}
-        for c in candidates:
-            c.sentiment = sentiment_map.get(c.name)
+        candidates: list[CandidateProduct] = []
+        for entry in entries:
+            candidates.append(CandidateProduct(
+                name=entry.product_name,
+                brand=entry.brand,
+                category=keyword,
+                product_code=entry.product_code,
+                rankings=[entry],
+                price=entry.price,
+                naver_rank=entry.rank,
+            ))
 
-    def _classify_prices(
+        return candidates
+
+    def _fetch_keyword_metrics(
         self, candidates: list[CandidateProduct]
     ) -> None:
-        """Populate price_position on each candidate (in-place)."""
-        classifier = PriceClassifier()
-        positions = classifier.classify_candidates(candidates)
+        """Populate keyword_metrics on each candidate (in-place).
 
-        position_map = {p.product_name: p for p in positions}
+        Builds brand-level keywords (manufacturer + product line) and
+        shares metrics across candidates with the same keyword.
+        """
+        client = NaverAdClient(self.config)
+
+        # Group candidates by brand-level keyword
+        keyword_groups: dict[str, list[CandidateProduct]] = {}
         for c in candidates:
-            c.price_position = position_map.get(c.name)
+            kw = _build_product_keyword(c.name, c.brand)
+            if kw:
+                keyword_groups.setdefault(kw, []).append(c)
 
-    def _check_resale(
-        self, candidates: list[CandidateProduct]
-    ) -> None:
-        """Populate resale_check on each candidate (in-place)."""
-        with ResaleQuickChecker(self.config) as checker:
-            checks = checker.check_resale_batch(candidates)
+        unique_keywords = list(keyword_groups.keys())
+        if not unique_keywords:
+            return
 
-        check_map = {r.product_name: r for r in checks}
-        for c in candidates:
-            c.resale_check = check_map.get(c.name)
+        logger.info(
+            "Querying %d unique keywords: %s",
+            len(unique_keywords), unique_keywords,
+        )
+
+        try:
+            metrics_list = client.get_keyword_metrics(unique_keywords)
+        except Exception:
+            logger.warning(
+                "Naver Search Ad API failed, continuing with empty metrics",
+                exc_info=True,
+            )
+            return
+
+        # Map keyword → metrics
+        metrics_map = {m.product_name: m for m in metrics_list}
+
+        # Assign shared metrics to all candidates with the same keyword
+        for kw, cands in keyword_groups.items():
+            m = metrics_map.get(kw)
+            if m and m.monthly_clicks > 0:
+                for c in cands:
+                    c.keyword_metrics = dataclasses.replace(
+                        m, product_name=c.name
+                    )
+
+    @staticmethod
+    def _validate(picks: list) -> list[ValidationResult]:
+        """Basic validation on selected products."""
+        validations: list[ValidationResult] = []
+
+        # Brand diversity check — use manufacturer, not product line
+        manufacturers = [p.candidate.manufacturer for p in picks]
+        unique_mfrs = set(manufacturers)
+        validations.append(ValidationResult(
+            check_name="brand_diversity",
+            passed=len(unique_mfrs) == len(manufacturers),
+            detail=f"{len(unique_mfrs)} unique manufacturers: {', '.join(unique_mfrs)}",
+        ))
+
+        # Keyword data check
+        has_metrics = sum(
+            1 for p in picks if p.candidate.keyword_metrics
+            and p.candidate.keyword_metrics.monthly_clicks > 0
+        )
+        validations.append(ValidationResult(
+            check_name="keyword_data",
+            passed=has_metrics >= 1,
+            detail=f"{has_metrics}/{len(picks)} products have keyword metrics",
+        ))
+
+        return validations
 
     def save_to_db(self, result: SelectionResult) -> None:
         """Save selection result to product_selections table."""
@@ -270,3 +240,37 @@ class ProductSelectionPipeline:
             logger.info("Saved selection result to database")
         finally:
             conn.close()
+
+
+def _build_product_keyword(product_name: str, brand: str) -> str:
+    """Build API keyword from manufacturer + product line (brand).
+
+    Uses the brand field from Naver Shopping API (product line name)
+    combined with the manufacturer prefix extracted from the product name.
+
+    Returns empty string when the keyword would be too generic
+    (e.g., brand == manufacturer → just "삼성" or "LG").
+
+    Examples:
+        ("삼성전자 그랑데 WF19T6000KW 화이트", "그랑데") → "삼성그랑데"
+        ("LG전자 트롬 오브제 FX25ESR", "트롬") → "LG트롬"
+        ("삼성전자 비스포크AI콤보 25/18kg", "비스포크AI콤보") → "삼성비스포크AI콤보"
+        ("삼성전자 삼성 WF21DG6650B", "삼성") → "" (too generic)
+    """
+    manufacturer = extract_manufacturer(product_name)
+    if brand:
+        # Skip if brand is just the manufacturer name — keyword would be
+        # too generic (e.g., "삼성" matches all Samsung searches)
+        if brand == manufacturer:
+            return ""
+        # Avoid duplication: "삼성" + "삼성비스포크" → "삼성비스포크"
+        if manufacturer and brand.startswith(manufacturer):
+            keyword = brand.replace(" ", "")
+        else:
+            keyword = f"{manufacturer}{brand}".replace(" ", "")
+    elif manufacturer:
+        # No brand at all — manufacturer-only keyword is too generic
+        return ""
+    else:
+        keyword = ""
+    return keyword

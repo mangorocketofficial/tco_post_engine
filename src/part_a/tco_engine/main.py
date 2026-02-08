@@ -4,6 +4,12 @@ Usage:
     python -m src.part_a.tco_engine.main --category "로봇청소기"
     python -m src.part_a.tco_engine.main --product-id 1
     python -m src.part_a.tco_engine.main --category "로봇청소기" --output data/exports/tco.json
+
+    # With A2/A3 Claude WebSearch overrides (hybrid pipeline):
+    python -m src.part_a.tco_engine.main --category "로봇청소기" \\
+        --a2-data data/processed/a2_resale_로봇청소기.json \\
+        --a3-data data/processed/a3_repair_로봇청소기.json \\
+        --output data/exports/tco_로봇청소기.json
 """
 
 from __future__ import annotations
@@ -37,6 +43,16 @@ def main() -> None:
         help="Single product database ID to calculate TCO for",
     )
     parser.add_argument(
+        "--a2-data",
+        type=str,
+        help="A2 resale JSON override from Claude WebSearch (data/processed/a2_resale_*.json)",
+    )
+    parser.add_argument(
+        "--a3-data",
+        type=str,
+        help="A3 repair JSON override from Claude WebSearch (data/processed/a3_repair_*.json)",
+    )
+    parser.add_argument(
         "--output",
         type=str,
         help="Output JSON file path",
@@ -51,7 +67,7 @@ def main() -> None:
     init_db(config)
 
     if args.category:
-        exporter = TCOExporter(config)
+        exporter = TCOExporter(config, a2_data_path=args.a2_data, a3_data_path=args.a3_data)
         export = exporter.export_category(args.category, args.output)
 
         logger.info("=== TCO Category Export: %s ===", args.category)
@@ -60,11 +76,13 @@ def main() -> None:
         for product in export["products"]:
             tco = product["tco"]
             logger.info(
-                "  %s (%s): purchase=%s, resale=%s, repair=%s → real_cost=%s원",
+                "  %s (%s): purchase=%s, resale(1yr/2yr/3yr+)=%s/%s/%s, repair=%s → real_cost=%s원",
                 product["name"],
                 product["brand"],
                 f"{tco['purchase_price_avg']:,}",
-                f"{tco['resale_value_24mo']:,}",
+                f"{tco['resale_value_1yr']:,}",
+                f"{tco['resale_value_2yr']:,}",
+                f"{tco['resale_value_3yr_plus']:,}",
                 f"{tco['expected_repair_cost']:,}",
                 f"{tco['real_cost_3yr']:,}",
             )
@@ -75,7 +93,7 @@ def main() -> None:
             )
 
     elif args.product_id:
-        calculator = TCOCalculator(config)
+        calculator = TCOCalculator(config, a2_data_path=args.a2_data, a3_data_path=args.a3_data)
         tco = calculator.calculate_for_product(args.product_id)
 
         logger.info("=== TCO for %s ===", tco["product_name"])

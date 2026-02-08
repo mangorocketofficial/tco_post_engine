@@ -5,25 +5,33 @@ from __future__ import annotations
 import json
 from datetime import date
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from src.part_a.common.config import Config
 from src.part_a.database.connection import get_connection, init_db
-from src.part_a.product_selector.candidate_aggregator import CandidateAggregator
 from src.part_a.product_selector.category_config import CategoryConfig
 from src.part_a.product_selector.models import (
     CandidateProduct,
+    KeywordMetrics,
     PricePosition,
     ProductScores,
     ResaleQuickCheck,
     SalesRankingEntry,
     SearchInterest,
+    SelectedProduct,
     SelectionResult,
     SentimentData,
-    SlotAssignment,
     ValidationResult,
+    extract_manufacturer,
+)
+from src.part_a.product_selector.pipeline import _build_product_keyword
+from src.part_a.product_selector.naver_ad_client import (
+    NaverAdClient,
+    _clean_keyword,
+    _map_competition,
+    _safe_int,
 )
 from src.part_a.product_selector.price_classifier import PriceClassifier
 from src.part_a.product_selector.sales_ranking_scraper import (
@@ -37,8 +45,7 @@ from src.part_a.product_selector.sales_ranking_scraper import (
 from src.part_a.product_selector.scorer import ProductScorer
 from src.part_a.product_selector.search_interest_scraper import NaverDataLabScraper
 from src.part_a.product_selector.sentiment_scraper import SentimentScraper
-from src.part_a.product_selector.slot_selector import SlotSelector
-from src.part_a.product_selector.validator import SelectionValidator
+from src.part_a.product_selector.slot_selector import TopSelector
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -51,53 +58,32 @@ FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures"
 def _make_candidate(
     name: str,
     brand: str,
-    presence: int = 3,
-    avg_rank: float = 5.0,
     price: int = 1_000_000,
-    tier: str = "mid",
-    search_vol: float = 50.0,
-    neg_posts: int = 5,
-    pos_posts: int = 15,
-    total_posts: int = 30,
-    resale_ratio: float = 0.5,
+    monthly_clicks: int = 500,
+    avg_cpc: int = 3000,
+    monthly_search_volume: int = 10000,
+    competition: str = "medium",
+    naver_rank: int = 1,
     in_stock: bool = True,
-    release_date: date | None = None,
 ) -> CandidateProduct:
-    """Build a CandidateProduct with all data fields populated."""
-    rankings = [
-        SalesRankingEntry(
-            product_name=name, brand=brand, platform="danawa",
-            rank=int(avg_rank), price=price,
-        )
-    ]
+    """Build a CandidateProduct with keyword metrics populated."""
     return CandidateProduct(
         name=name,
         brand=brand,
         category="로봇청소기",
-        rankings=rankings,
-        presence_score=presence,
-        avg_rank=avg_rank,
+        price=price,
+        naver_rank=naver_rank,
         in_stock=in_stock,
-        release_date=release_date,
-        search_interest=SearchInterest(
-            product_name=name, volume_30d=search_vol, volume_90d=search_vol,
-        ),
-        sentiment=SentimentData(
-            product_name=name, total_posts=total_posts,
-            negative_posts=neg_posts, positive_posts=pos_posts,
-        ),
-        price_position=PricePosition(
-            product_name=name, current_price=price, avg_price_90d=price,
-            price_tier=tier,
-            price_normalized=(
-                {"premium": 1.0, "mid": 0.5, "budget": 0.0}.get(tier, 0.5)
-            ),
-        ),
-        resale_check=ResaleQuickCheck(
+        keyword_metrics=KeywordMetrics(
             product_name=name,
-            avg_used_price=int(price * resale_ratio),
-            avg_new_price=price,
-            sample_count=10,
+            monthly_clicks=monthly_clicks,
+            monthly_pc_clicks=monthly_clicks // 3,
+            monthly_mobile_clicks=monthly_clicks - monthly_clicks // 3,
+            avg_cpc=avg_cpc,
+            monthly_search_volume=monthly_search_volume,
+            monthly_pc_search=monthly_search_volume // 3,
+            monthly_mobile_search=monthly_search_volume - monthly_search_volume // 3,
+            competition=competition,
         ),
     )
 
@@ -214,58 +200,135 @@ class TestResaleQuickCheck:
         assert d["resale_ratio"] == 0.5
 
 
+class TestKeywordMetrics:
+    def test_create_default(self):
+        km = KeywordMetrics(product_name="Test")
+        assert km.monthly_search_volume == 0
+        assert km.monthly_clicks == 0
+        assert km.avg_cpc == 0
+        assert km.competition == "low"
+
+    def test_create_with_values(self):
+        km = KeywordMetrics(
+            product_name="Test",
+            monthly_search_volume=50000,
+            monthly_clicks=2000,
+            avg_cpc=5000,
+            competition="high",
+        )
+        assert km.monthly_search_volume == 50000
+        assert km.monthly_clicks == 2000
+        assert km.avg_cpc == 5000
+        assert km.competition == "high"
+
+    def test_to_dict(self):
+        km = KeywordMetrics(
+            product_name="Test",
+            monthly_search_volume=10000,
+            monthly_clicks=500,
+            avg_cpc=3000,
+            competition="medium",
+        )
+        d = km.to_dict()
+        assert d["product_name"] == "Test"
+        assert d["monthly_search_volume"] == 10000
+        assert d["monthly_clicks"] == 500
+        assert d["avg_cpc"] == 3000
+        assert d["competition"] == "medium"
+
+
 class TestCandidateProduct:
     def test_create_minimal(self):
         c = CandidateProduct(name="Test", brand="Brand", category="Cat")
         assert c.in_stock is True
-        assert c.presence_score == 0
+        assert c.naver_rank == 0
+        assert c.keyword_metrics is None
+
+    def test_create_with_keyword_metrics(self):
+        c = _make_candidate("Test", "Brand")
+        assert c.keyword_metrics is not None
+        assert c.keyword_metrics.monthly_clicks == 500
 
     def test_to_dict(self):
         c = _make_candidate("Test", "Brand")
         d = c.to_dict()
         assert d["name"] == "Test"
         assert d["brand"] == "Brand"
-        assert d["presence_score"] == 3
+        assert d["naver_rank"] == 1
+        assert d["keyword_metrics"] is not None
+        assert d["keyword_metrics"]["monthly_clicks"] == 500
+
+    def test_to_dict_without_keyword_metrics(self):
+        c = CandidateProduct(name="Test", brand="Brand", category="Cat")
+        d = c.to_dict()
+        assert d["keyword_metrics"] is None
 
 
 class TestProductScores:
-    def test_weighted_total(self):
+    def test_total_score_all_max(self):
         ps = ProductScores(
             product_name="Test",
-            sales_presence=1.0,
-            search_interest=1.0,
-            sentiment=1.0,
-            price_position=1.0,
-            resale_retention=1.0,
+            clicks_score=1.0,
+            cpc_score=1.0,
+            search_volume_score=1.0,
+            competition_score=1.0,
         )
-        assert ps.weighted_total == pytest.approx(1.0)
+        assert ps.total_score == pytest.approx(1.0)
 
-    def test_weighted_total_partial(self):
+    def test_total_score_weighted(self):
         ps = ProductScores(
             product_name="Test",
-            sales_presence=0.5,    # 0.5 * 0.20 = 0.10
-            search_interest=0.8,   # 0.8 * 0.25 = 0.20
-            sentiment=0.6,         # 0.6 * 0.25 = 0.15
-            price_position=0.4,    # 0.4 * 0.15 = 0.06
-            resale_retention=0.7,  # 0.7 * 0.15 = 0.105
+            clicks_score=0.8,     # 0.8 * 0.4 = 0.32
+            cpc_score=0.6,        # 0.6 * 0.3 = 0.18
+            search_volume_score=0.4,  # 0.4 * 0.2 = 0.08
+            competition_score=0.5,    # 0.5 * 0.1 = 0.05
         )
-        expected = 0.10 + 0.20 + 0.15 + 0.06 + 0.105
-        assert ps.weighted_total == pytest.approx(expected)
+        expected = 0.32 + 0.18 + 0.08 + 0.05
+        assert ps.total_score == pytest.approx(expected)
+
+    def test_total_score_zeros(self):
+        ps = ProductScores(product_name="Test")
+        assert ps.total_score == 0.0
 
     def test_to_dict(self):
-        ps = ProductScores(product_name="Test", sales_presence=0.9)
+        ps = ProductScores(product_name="Test", clicks_score=0.9, cpc_score=0.7)
         d = ps.to_dict()
-        assert d["sales_presence"] == 0.9
-        assert "weighted_total" in d
+        assert d["clicks_score"] == 0.9
+        assert d["cpc_score"] == 0.7
+        assert "total_score" in d
+
+
+class TestSelectedProduct:
+    def test_create(self):
+        candidate = _make_candidate("Test", "Brand")
+        scores = ProductScores(product_name="Test", clicks_score=0.8)
+        sp = SelectedProduct(
+            rank=1, candidate=candidate, scores=scores,
+            selection_reasons=["High clicks"],
+        )
+        assert sp.rank == 1
+        assert sp.candidate.name == "Test"
+        assert sp.selection_reasons == ["High clicks"]
+
+    def test_to_dict(self):
+        candidate = _make_candidate("TestProd", "TestBrand", price=1500000)
+        scores = ProductScores(product_name="TestProd", clicks_score=0.9)
+        sp = SelectedProduct(rank=1, candidate=candidate, scores=scores)
+        d = sp.to_dict()
+        assert d["rank"] == 1
+        assert d["name"] == "TestProd"
+        assert d["brand"] == "TestBrand"
+        assert d["price"] == 1500000
+        assert "scores" in d
 
 
 class TestSelectionResult:
     def test_to_dict(self):
         candidate = _make_candidate("TestProd", "TestBrand")
-        scores = ProductScores(product_name="TestProd", sales_presence=0.9)
-        assignment = SlotAssignment(
-            slot="stability", candidate=candidate, scores=scores,
-            selection_reasons=["Best sentiment"],
+        scores = ProductScores(product_name="TestProd", clicks_score=0.9)
+        selected = SelectedProduct(
+            rank=1, candidate=candidate, scores=scores,
+            selection_reasons=["Top clicks"],
         )
         validation = ValidationResult(
             check_name="brand_diversity", passed=True, detail="3 unique brands",
@@ -273,9 +336,9 @@ class TestSelectionResult:
         result = SelectionResult(
             category="로봇청소기",
             selection_date=date(2026, 2, 7),
-            data_sources={"sales_rankings": ["naver"]},
+            data_sources={"candidates": "naver_shopping_api"},
             candidate_pool_size=10,
-            selected_products=[assignment],
+            selected_products=[selected],
             validation=[validation],
         )
         d = result.to_dict()
@@ -287,13 +350,13 @@ class TestSelectionResult:
     def test_to_json(self):
         candidate = _make_candidate("TestProd", "TestBrand")
         scores = ProductScores(product_name="TestProd")
-        assignment = SlotAssignment(slot="balance", candidate=candidate, scores=scores)
+        selected = SelectedProduct(rank=1, candidate=candidate, scores=scores)
         result = SelectionResult(
             category="test",
             selection_date=date(2026, 1, 1),
             data_sources={},
             candidate_pool_size=5,
-            selected_products=[assignment],
+            selected_products=[selected],
             validation=[],
         )
         j = result.to_json()
@@ -336,6 +399,276 @@ class TestParsingHelpers:
 
     def test_parse_rating_empty(self):
         assert _parse_rating("") == 0.0
+
+
+# ===================================================================
+# Naver Ad Client Tests
+# ===================================================================
+
+
+class TestNaverAdClientHelpers:
+    def test_safe_int_from_int(self):
+        assert _safe_int(42) == 42
+
+    def test_safe_int_from_float(self):
+        assert _safe_int(42.9) == 42
+
+    def test_safe_int_from_string(self):
+        assert _safe_int("1500") == 1500
+
+    def test_safe_int_from_string_with_commas(self):
+        assert _safe_int("1,500") == 1500
+
+    def test_safe_int_from_less_than_string(self):
+        assert _safe_int("< 10") == 10
+
+    def test_safe_int_from_invalid_string(self):
+        assert _safe_int("N/A") == 0
+
+    def test_safe_int_from_none(self):
+        assert _safe_int(None) == 0
+
+    def test_map_competition_high(self):
+        assert _map_competition("높음") == "high"
+
+    def test_map_competition_medium(self):
+        assert _map_competition("중간") == "medium"
+
+    def test_map_competition_low(self):
+        assert _map_competition("낮음") == "low"
+
+    def test_map_competition_unknown(self):
+        assert _map_competition("unknown") == "low"
+
+
+class TestExtractManufacturer:
+    def test_lg_jeonja(self):
+        assert extract_manufacturer("LG전자 LG 트롬 세탁기") == "LG"
+
+    def test_samsung_jeonja(self):
+        assert extract_manufacturer("삼성전자 비스포크AI콤보") == "삼성"
+
+    def test_lg_without_jeonja(self):
+        assert extract_manufacturer("LG 트롬 오브제") == "LG"
+
+    def test_unknown_brand(self):
+        assert extract_manufacturer("로보락 S8 MaxV Ultra") == ""
+
+    def test_empty_string(self):
+        assert extract_manufacturer("") == ""
+
+
+class TestManufacturerProperty:
+    def test_lg_product(self):
+        c = CandidateProduct(name="LG전자 트롬 세탁기", brand="트롬", category="세탁기")
+        assert c.manufacturer == "LG"
+
+    def test_samsung_product(self):
+        c = CandidateProduct(name="삼성전자 그랑데 WF19T", brand="그랑데", category="세탁기")
+        assert c.manufacturer == "삼성"
+
+    def test_fallback_to_brand(self):
+        c = CandidateProduct(name="로보락 S8 MaxV Ultra", brand="로보락", category="로봇청소기")
+        assert c.manufacturer == "로보락"
+
+
+class TestBuildProductKeyword:
+    def test_samsung_grande(self):
+        assert _build_product_keyword("삼성전자 그랑데 WF19T6000KW 화이트", "그랑데") == "삼성그랑데"
+
+    def test_lg_trom(self):
+        assert _build_product_keyword("LG전자 트롬 오브제 FX25ESR", "트롬") == "LG트롬"
+
+    def test_samsung_bespoke(self):
+        kw = _build_product_keyword("삼성전자 비스포크AI콤보 25/18kg", "비스포크AI콤보")
+        assert kw == "삼성비스포크AI콤보"
+
+    def test_no_brand_returns_empty(self):
+        # No brand, manufacturer-only → too generic, skip
+        assert _build_product_keyword("삼성전자 세탁기", "") == ""
+
+    def test_unknown_manufacturer_with_brand(self):
+        kw = _build_product_keyword("로보락 S8 MaxV Ultra", "로보락")
+        assert kw == "로보락"
+
+    def test_brand_equals_manufacturer_returns_empty(self):
+        # brand="삼성" == manufacturer="삼성" → too generic, skip
+        assert _build_product_keyword("삼성전자 드럼세탁기", "삼성") == ""
+        assert _build_product_keyword("삼성전자 삼성 WF21DG6650B", "삼성") == ""
+
+    def test_brand_starts_with_manufacturer_ok(self):
+        # brand="삼성전자" starts with manufacturer="삼성" but is longer → OK
+        assert _build_product_keyword("삼성전자 제품", "삼성전자") == "삼성전자"
+
+    def test_lg_brand_equals_manufacturer_returns_empty(self):
+        # brand="LG" == manufacturer="LG" → too generic, skip
+        assert _build_product_keyword("LG전자 LG 세탁기", "LG") == ""
+
+
+class TestCleanKeyword:
+    def test_removes_parenthesized_content(self):
+        result = _clean_keyword("LG전자 LG 트롬(F21VDSK)")
+        assert "F21VDSK" not in result
+        assert "(" not in result
+
+    def test_simplifies_lg_manufacturer(self):
+        result = _clean_keyword("LG전자 트롬 세탁기")
+        assert result.startswith("LG")
+        assert "전자" not in result
+
+    def test_simplifies_samsung_manufacturer(self):
+        result = _clean_keyword("삼성전자 비스포크 세탁기")
+        assert result.startswith("삼성")
+        assert "전자" not in result
+
+    def test_removes_color_suffixes(self):
+        result = _clean_keyword("삼성전자 비스포크 화이트")
+        assert "화이트" not in result
+
+    def test_removes_stainless_silver(self):
+        result = _clean_keyword("LG전자 트롬 스테인리스 실버")
+        assert "스테인리스" not in result
+        assert "실버" not in result
+
+    def test_removes_model_codes(self):
+        result = _clean_keyword("삼성 비스포크 WD80F25CH")
+        assert "WD80F25CH" not in result
+
+    def test_removes_weight_specs(self):
+        result = _clean_keyword("LG 트롬 21kg")
+        assert "21kg" not in result
+        assert "kg" not in result
+
+    def test_removes_spaces(self):
+        result = _clean_keyword("LG 트롬 세탁기")
+        assert " " not in result
+
+    def test_truncates_long_keywords(self):
+        result = _clean_keyword("삼성전자 비스포크AI콤보 올인원 세탁건조기 특대형")
+        assert len(result) <= 20
+
+    def test_full_product_name_lg(self):
+        result = _clean_keyword("LG전자 LG 트롬 21kg 스테인리스 실버(F21VDSK)")
+        assert result == "LG트롬"
+
+    def test_full_product_name_samsung(self):
+        result = _clean_keyword("삼성전자 비스포크AI콤보 WD80F25CH 화이트(WD80F25CHW)")
+        assert "삼성" in result
+        assert "비스포크" in result
+        assert " " not in result
+
+    def test_empty_string(self):
+        assert _clean_keyword("") == ""
+
+    def test_removes_year_references(self):
+        result = _clean_keyword("삼성 비스포크 2025")
+        assert "2025" not in result
+
+    def test_removes_special_characters(self):
+        result = _clean_keyword("LG 트롬+건조기")
+        assert "+" not in result
+
+
+class TestNaverAdClient:
+    def test_not_configured(self):
+        config = Config()
+        config.naver_searchad_customer_id = ""
+        config.naver_searchad_api_key = ""
+        config.naver_searchad_secret_key = ""
+        client = NaverAdClient(config)
+        assert not client.is_configured
+
+    def test_configured(self):
+        config = Config()
+        config.naver_searchad_customer_id = "test_customer"
+        config.naver_searchad_api_key = "test_key"
+        config.naver_searchad_secret_key = "test_secret"
+        client = NaverAdClient(config)
+        assert client.is_configured
+
+    def test_returns_empty_metrics_when_not_configured(self):
+        config = Config()
+        config.naver_searchad_customer_id = ""
+        config.naver_searchad_api_key = ""
+        config.naver_searchad_secret_key = ""
+        client = NaverAdClient(config)
+        results = client.get_keyword_metrics(["product1", "product2"])
+        assert len(results) == 2
+        assert results[0].product_name == "product1"
+        assert results[0].monthly_clicks == 0
+
+    def test_parse_response(self):
+        config = Config()
+        client = NaverAdClient(config)
+        api_data = {
+            "keywordList": [
+                {
+                    "relKeyword": "로보락S8",
+                    "monthlyPcQcCnt": 5000,
+                    "monthlyMobileQcCnt": 15000,
+                    "monthlyAvePcClkCnt": 200,
+                    "monthlyAveMobileClkCnt": 800,
+                    "plAvgDepth": 3500,
+                    "compIdx": "높음",
+                },
+                {
+                    "relKeyword": "unrelated keyword",
+                    "monthlyPcQcCnt": 99999,
+                    "monthlyMobileQcCnt": 99999,
+                },
+            ],
+        }
+        results = client._parse_response(api_data, ["로보락S8"])
+        assert len(results) == 1
+        assert results[0].product_name == "로보락S8"
+        assert results[0].monthly_search_volume == 20000
+        assert results[0].monthly_clicks == 1000
+        assert results[0].avg_cpc == 3500
+        assert results[0].competition == "high"
+
+    def test_parse_response_case_insensitive(self):
+        config = Config()
+        client = NaverAdClient(config)
+        api_data = {
+            "keywordList": [
+                {"relKeyword": "lg 코드제로", "monthlyPcQcCnt": 100, "monthlyMobileQcCnt": 200},
+            ],
+        }
+        results = client._parse_response(api_data, ["LG코드제로"])
+        assert len(results) == 1
+        assert results[0].product_name == "LG코드제로"
+
+    def test_parse_response_handles_less_than_values(self):
+        config = Config()
+        client = NaverAdClient(config)
+        api_data = {
+            "keywordList": [
+                {
+                    "relKeyword": "TestProduct",
+                    "monthlyPcQcCnt": "< 10",
+                    "monthlyMobileQcCnt": "< 10",
+                    "monthlyAvePcClkCnt": "< 10",
+                    "monthlyAveMobileClkCnt": "< 10",
+                },
+            ],
+        }
+        results = client._parse_response(api_data, ["TestProduct"])
+        assert len(results) == 1
+        assert results[0].monthly_search_volume == 20  # 10 + 10
+
+    def test_parse_response_no_duplicate_match(self):
+        """Each keyword should only match once (first match wins)."""
+        config = Config()
+        client = NaverAdClient(config)
+        api_data = {
+            "keywordList": [
+                {"relKeyword": "LG트롬", "monthlyPcQcCnt": 1000, "monthlyMobileQcCnt": 2000},
+                {"relKeyword": "LG 트롬 세탁기", "monthlyPcQcCnt": 500, "monthlyMobileQcCnt": 800},
+            ],
+        }
+        results = client._parse_response(api_data, ["LG트롬"])
+        assert len(results) == 1
+        assert results[0].monthly_search_volume == 3000  # First match
 
 
 # ===================================================================
@@ -433,57 +766,6 @@ class TestCoupangRankingScraper:
         assert all(r.platform == "coupang" for r in results)
         assert results[0].price == 949000
         assert results[0].review_count == 3201
-
-
-# ===================================================================
-# Candidate Aggregator Tests
-# ===================================================================
-
-
-class TestCandidateAggregator:
-    def test_aggregate_cross_platform(self):
-        naver = [
-            SalesRankingEntry(product_name="로보락 Q Revo S", brand="로보락", platform="naver", rank=1, price=1490000),
-            SalesRankingEntry(product_name="삼성 비스포크 제트봇 AI", brand="삼성", platform="naver", rank=2, price=1290000),
-        ]
-        danawa = [
-            SalesRankingEntry(product_name="로보락 Q Revo S", brand="로보락", platform="danawa", rank=1, price=1480000),
-            SalesRankingEntry(product_name="에코백스 T30 Pro Omni", brand="에코백스", platform="danawa", rank=3, price=640000),
-        ]
-        coupang = [
-            SalesRankingEntry(product_name="로보락 Q Revo S 로봇청소기", brand="Roborock", platform="coupang", rank=3, price=1495000),
-            SalesRankingEntry(product_name="에코백스 T30 Pro Omni 로봇청소기", brand="ECOVACS", platform="coupang", rank=2, price=645000),
-        ]
-
-        aggregator = CandidateAggregator()
-        candidates = aggregator.aggregate(naver, danawa, coupang, category="로봇청소기")
-
-        # 로보락 appears on all 3, 에코백스 on 2, 삼성 on only 1 (excluded)
-        assert len(candidates) >= 2
-        roborock = next((c for c in candidates if "로보락" in c.name), None)
-        assert roborock is not None
-        assert roborock.presence_score == 3
-
-    def test_filter_presence_score(self):
-        naver = [
-            SalesRankingEntry(product_name="OnlyNaver", brand="B1", platform="naver", rank=1),
-        ]
-        danawa = [
-            SalesRankingEntry(product_name="OnlyDanawa", brand="B2", platform="danawa", rank=1),
-        ]
-        coupang = [
-            SalesRankingEntry(product_name="OnlyCoupang", brand="B3", platform="coupang", rank=1),
-        ]
-
-        aggregator = CandidateAggregator()
-        candidates = aggregator.aggregate(naver, danawa, coupang, min_presence=2)
-        # None appear on 2+ platforms
-        assert len(candidates) == 0
-
-    def test_normalize_product_name(self):
-        assert "로보락" in CandidateAggregator._normalize_product_name("로보락 S8 Pro Ultra 로봇청소기")
-        # Category suffix removed
-        assert "로봇청소기" not in CandidateAggregator._normalize_product_name("로보락 S8 Pro Ultra 로봇청소기")
 
 
 # ===================================================================
@@ -590,24 +872,37 @@ class TestPriceClassifier:
 
 
 # ===================================================================
-# Scorer Tests
+# Scorer Tests (keyword metrics based)
 # ===================================================================
 
 
 class TestProductScorer:
     def test_score_candidates(self):
         candidates = [
-            _make_candidate("A", "BrandA", presence=3, search_vol=100.0,
-                          neg_posts=2, pos_posts=20, total_posts=30, resale_ratio=0.6),
-            _make_candidate("B", "BrandB", presence=2, search_vol=50.0,
-                          neg_posts=10, pos_posts=5, total_posts=30, resale_ratio=0.3),
+            _make_candidate("A", "BrandA", monthly_clicks=1000, avg_cpc=5000,
+                          monthly_search_volume=20000, competition="high"),
+            _make_candidate("B", "BrandB", monthly_clicks=200, avg_cpc=1000,
+                          monthly_search_volume=5000, competition="low"),
         ]
         scorer = ProductScorer()
         scores = scorer.score_candidates(candidates)
 
-        assert scores["A"].sales_presence > scores["B"].sales_presence
-        assert scores["A"].search_interest > scores["B"].search_interest
-        assert scores["A"].sentiment > scores["B"].sentiment
+        assert scores["A"].clicks_score > scores["B"].clicks_score
+        assert scores["A"].cpc_score > scores["B"].cpc_score
+        assert scores["A"].search_volume_score > scores["B"].search_volume_score
+        assert scores["A"].competition_score > scores["B"].competition_score
+        assert scores["A"].total_score > scores["B"].total_score
+
+    def test_score_with_no_keyword_metrics(self):
+        candidates = [
+            CandidateProduct(name="A", brand="BrandA", category="test"),
+            CandidateProduct(name="B", brand="BrandB", category="test"),
+        ]
+        scorer = ProductScorer()
+        scores = scorer.score_candidates(candidates)
+        # All zeros → normalized to 0.5 each
+        assert scores["A"].clicks_score == pytest.approx(0.5)
+        assert scores["B"].clicks_score == pytest.approx(0.5)
 
     def test_empty_candidates(self):
         scorer = ProductScorer()
@@ -615,216 +910,111 @@ class TestProductScorer:
 
 
 # ===================================================================
-# Slot Selector Tests
+# Top Selector Tests
 # ===================================================================
 
 
-class TestSlotSelector:
+class TestTopSelector:
     def _make_3_candidates(self):
         return [
-            _make_candidate("Premium Pro", "BrandA", tier="premium", price=1500000,
-                          neg_posts=2, pos_posts=25, total_posts=30, resale_ratio=0.7,
-                          search_vol=70.0, presence=3),
-            _make_candidate("Balance Best", "BrandB", tier="mid", price=900000,
-                          neg_posts=5, pos_posts=15, total_posts=30, resale_ratio=0.5,
-                          search_vol=100.0, presence=3),
-            _make_candidate("Budget Value", "BrandC", tier="budget", price=500000,
-                          neg_posts=8, pos_posts=10, total_posts=30, resale_ratio=0.3,
-                          search_vol=40.0, presence=2),
+            _make_candidate("High Score", "BrandA",
+                          monthly_clicks=1000, avg_cpc=5000,
+                          monthly_search_volume=20000, competition="high"),
+            _make_candidate("Mid Score", "BrandB",
+                          monthly_clicks=500, avg_cpc=3000,
+                          monthly_search_volume=10000, competition="medium"),
+            _make_candidate("Low Score", "BrandC",
+                          monthly_clicks=100, avg_cpc=1000,
+                          monthly_search_volume=3000, competition="low"),
         ]
 
     def test_select_3_products(self):
         candidates = self._make_3_candidates()
         scorer = ProductScorer()
         scores = scorer.score_candidates(candidates)
-        selector = SlotSelector()
-        assignments = selector.select(candidates, scores)
+        selector = TopSelector()
+        picks = selector.select(candidates, scores)
 
-        assert len(assignments) == 3
-        slots = {a.slot for a in assignments}
-        assert slots == {"stability", "balance", "value"}
+        assert len(picks) == 3
+        ranks = {p.rank for p in picks}
+        assert ranks == {1, 2, 3}
 
-    def test_stability_prefers_low_complaint(self):
+    def test_rank_order_by_score(self):
         candidates = self._make_3_candidates()
         scorer = ProductScorer()
         scores = scorer.score_candidates(candidates)
-        selector = SlotSelector()
-        assignments = selector.select(candidates, scores)
+        selector = TopSelector()
+        picks = selector.select(candidates, scores)
 
-        stability = next(a for a in assignments if a.slot == "stability")
-        # Premium Pro has lowest complaint_rate (2/30) and highest resale
-        assert stability.candidate.name == "Premium Pro"
+        # Highest score should be rank 1
+        assert picks[0].rank == 1
+        assert picks[0].candidate.name == "High Score"
+        assert picks[1].rank == 2
+        assert picks[1].candidate.name == "Mid Score"
+        assert picks[2].rank == 3
+        assert picks[2].candidate.name == "Low Score"
 
-    def test_balance_prefers_high_search(self):
-        candidates = self._make_3_candidates()
+    def test_brand_diversity_enforcement(self):
+        # Two products from same manufacturer (삼성전자)
+        candidates = [
+            _make_candidate("삼성전자 비스포크 Top", "비스포크",
+                          monthly_clicks=1000, avg_cpc=5000),
+            _make_candidate("삼성전자 그랑데 Second", "그랑데",
+                          monthly_clicks=900, avg_cpc=4500),
+            _make_candidate("LG전자 트롬 Product", "트롬",
+                          monthly_clicks=500, avg_cpc=3000),
+            _make_candidate("위니아 Product", "위니아",
+                          monthly_clicks=200, avg_cpc=1000),
+        ]
         scorer = ProductScorer()
         scores = scorer.score_candidates(candidates)
-        selector = SlotSelector()
-        assignments = selector.select(candidates, scores)
+        selector = TopSelector()
+        picks = selector.select(candidates, scores)
 
-        balance = next(a for a in assignments if a.slot == "balance")
-        # Balance Best has highest search volume (100)
-        assert balance.candidate.name == "Balance Best"
+        assert len(picks) == 3
+        # manufacturer diversity: should have 삼성, LG, 위니아
+        manufacturers = [p.candidate.manufacturer for p in picks]
+        assert len(set(manufacturers)) == 3
 
-    def test_value_prefers_low_price(self):
-        candidates = self._make_3_candidates()
+    def test_brand_diversity_relaxed_when_needed(self):
+        # Only 2 unique manufacturers but need 3 picks
+        candidates = [
+            _make_candidate("삼성전자 A1", "비스포크", monthly_clicks=1000),
+            _make_candidate("삼성전자 A2", "그랑데", monthly_clicks=800),
+            _make_candidate("LG전자 B1", "트롬", monthly_clicks=500),
+        ]
         scorer = ProductScorer()
         scores = scorer.score_candidates(candidates)
-        selector = SlotSelector()
-        assignments = selector.select(candidates, scores)
+        selector = TopSelector()
+        picks = selector.select(candidates, scores)
 
-        value = next(a for a in assignments if a.slot == "value")
-        # Budget Value is the only remaining candidate
-        assert value.candidate.name == "Budget Value"
+        assert len(picks) == 3
+        # Should have relaxed brand constraint for 3rd pick
+        relaxed = [p for p in picks if "(brand diversity relaxed)" in p.selection_reasons]
+        assert len(relaxed) == 1
 
     def test_insufficient_candidates_raises(self):
-        candidates = [_make_candidate("A", "B"), _make_candidate("C", "D")]
+        candidates = [
+            _make_candidate("A", "BrandA"),
+            _make_candidate("B", "BrandB"),
+        ]
         scorer = ProductScorer()
         scores = scorer.score_candidates(candidates)
-        selector = SlotSelector()
+        selector = TopSelector()
         with pytest.raises(ValueError, match="at least 3"):
             selector.select(candidates, scores)
 
-
-# ===================================================================
-# Validator Tests
-# ===================================================================
-
-
-class TestSelectionValidator:
-    def _make_config(self):
-        return CategoryConfig.default_robot_vacuum()
-
-    def _make_assignment(
-        self, slot, name, brand, price=1000000, tier="mid",
-        total_posts=30, in_stock=True, release_date=None,
-    ):
-        candidate = _make_candidate(
-            name, brand, price=price, tier=tier,
-            total_posts=total_posts, in_stock=in_stock,
-            release_date=release_date,
-        )
-        scores = ProductScores(product_name=name, sales_presence=0.8)
-        return SlotAssignment(slot=slot, candidate=candidate, scores=scores)
-
-    def test_brand_diversity_pass(self):
-        config = self._make_config()
-        validator = SelectionValidator(config)
-        assignments = [
-            self._make_assignment("stability", "A", "Brand1"),
-            self._make_assignment("balance", "B", "Brand2"),
-            self._make_assignment("value", "C", "Brand3"),
-        ]
-        results = validator.validate(assignments)
-        brand_check = next(r for r in results if r.check_name == "brand_diversity")
-        assert brand_check.passed
-
-    def test_brand_diversity_fail(self):
-        config = self._make_config()
-        validator = SelectionValidator(config)
-        assignments = [
-            self._make_assignment("stability", "A", "Samsung"),
-            self._make_assignment("balance", "B", "Samsung"),
-            self._make_assignment("value", "C", "LG"),
-        ]
-        results = validator.validate(assignments)
-        brand_check = next(r for r in results if r.check_name == "brand_diversity")
-        assert not brand_check.passed
-
-    def test_price_spread_pass(self):
-        config = self._make_config()
-        validator = SelectionValidator(config)
-        assignments = [
-            self._make_assignment("stability", "A", "B1", price=1500000),
-            self._make_assignment("balance", "B", "B2", price=900000),
-            self._make_assignment("value", "C", "B3", price=500000),
-        ]
-        results = validator.validate(assignments)
-        spread = next(r for r in results if r.check_name == "price_spread")
-        assert spread.passed  # 1500000/500000 = 3.0 >= 1.3
-
-    def test_price_spread_fail(self):
-        config = self._make_config()
-        validator = SelectionValidator(config)
-        assignments = [
-            self._make_assignment("stability", "A", "B1", price=1000000),
-            self._make_assignment("balance", "B", "B2", price=950000),
-            self._make_assignment("value", "C", "B3", price=900000),
-        ]
-        results = validator.validate(assignments)
-        spread = next(r for r in results if r.check_name == "price_spread")
-        assert not spread.passed  # 1000000/900000 = 1.11 < 1.3
-
-    def test_data_sufficiency_pass(self):
-        config = self._make_config()
-        validator = SelectionValidator(config)
-        assignments = [
-            self._make_assignment("stability", "A", "B1", total_posts=50),
-            self._make_assignment("balance", "B", "B2", total_posts=30),
-            self._make_assignment("value", "C", "B3", total_posts=25),
-        ]
-        results = validator.validate(assignments)
-        sufficiency = next(r for r in results if r.check_name == "data_sufficiency")
-        assert sufficiency.passed
-
-    def test_data_sufficiency_fail(self):
-        config = self._make_config()
-        validator = SelectionValidator(config)
-        assignments = [
-            self._make_assignment("stability", "A", "B1", total_posts=50),
-            self._make_assignment("balance", "B", "B2", total_posts=5),
-            self._make_assignment("value", "C", "B3", total_posts=30),
-        ]
-        results = validator.validate(assignments)
-        sufficiency = next(r for r in results if r.check_name == "data_sufficiency")
-        assert not sufficiency.passed
-
-    def test_availability_pass(self):
-        config = self._make_config()
-        validator = SelectionValidator(config)
-        assignments = [
-            self._make_assignment("stability", "A", "B1", in_stock=True),
-            self._make_assignment("balance", "B", "B2", in_stock=True),
-            self._make_assignment("value", "C", "B3", in_stock=True),
-        ]
-        results = validator.validate(assignments)
-        avail = next(r for r in results if r.check_name == "availability")
-        assert avail.passed
-
-    def test_availability_fail(self):
-        config = self._make_config()
-        validator = SelectionValidator(config)
-        assignments = [
-            self._make_assignment("stability", "A", "B1", in_stock=True),
-            self._make_assignment("balance", "B", "B2", in_stock=False),
-            self._make_assignment("value", "C", "B3", in_stock=True),
-        ]
-        results = validator.validate(assignments)
-        avail = next(r for r in results if r.check_name == "availability")
-        assert not avail.passed
-
-    def test_validate_and_fix_brand_swap(self):
-        config = self._make_config()
-        validator = SelectionValidator(config)
-
-        # Samsung appears twice
-        assignments = [
-            self._make_assignment("stability", "JetBot1", "Samsung", price=1300000),
-            self._make_assignment("balance", "JetBot2", "Samsung", price=1100000),
-            self._make_assignment("value", "CordZero", "LG", price=800000),
-        ]
-
-        # Alternative candidate
-        alt = _make_candidate("Roborock S8", "Roborock", price=1400000)
-        candidates = [a.candidate for a in assignments] + [alt]
+    def test_selection_reasons_include_metrics(self):
+        candidates = self._make_3_candidates()
         scorer = ProductScorer()
         scores = scorer.score_candidates(candidates)
+        selector = TopSelector()
+        picks = selector.select(candidates, scores)
 
-        fixed, results = validator.validate_and_fix(assignments, candidates, scores)
-        brand_check = next(r for r in results if r.check_name == "brand_diversity")
-        # Should have been fixed
-        brands = [a.candidate.brand for a in fixed]
-        assert len(set(brands)) == 3
+        # First pick should have keyword metric reasons
+        reasons = picks[0].selection_reasons
+        assert any("clicks" in r.lower() for r in reasons)
+        assert any("score" in r.lower() for r in reasons)
 
 
 # ===================================================================
@@ -968,14 +1158,14 @@ class TestSaveSelectionToDb:
         from src.part_a.product_selector.pipeline import ProductSelectionPipeline
 
         candidate = _make_candidate("Test", "Brand")
-        scores = ProductScores(product_name="Test")
-        assignment = SlotAssignment(slot="stability", candidate=candidate, scores=scores)
+        scores = ProductScores(product_name="Test", clicks_score=0.8)
+        selected = SelectedProduct(rank=1, candidate=candidate, scores=scores)
         result = SelectionResult(
             category="로봇청소기",
             selection_date=date(2026, 2, 7),
-            data_sources={"test": "test"},
+            data_sources={"candidates": "naver_shopping_api"},
             candidate_pool_size=10,
-            selected_products=[assignment],
+            selected_products=[selected],
             validation=[],
         )
 

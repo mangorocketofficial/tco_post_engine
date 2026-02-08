@@ -1,11 +1,8 @@
-"""Product scoring — normalizes raw data into 0.0–1.0 scores.
+"""Product scoring based on Naver Search Ad keyword metrics.
 
-Scores candidates across 5 dimensions with weights:
-- Sales Presence: 20%
-- Search Interest: 25%
-- Sentiment: 25%
-- Price Position: 15%
-- Resale Retention: 15%
+Score = clicks×0.4 + cpc×0.3 + search_volume×0.2 + competition×0.1
+
+All scores are min-max normalized within the candidate pool (0.0-1.0).
 """
 
 from __future__ import annotations
@@ -16,25 +13,24 @@ from .models import CandidateProduct, ProductScores
 
 logger = logging.getLogger(__name__)
 
+COMPETITION_MAP = {"high": 1.0, "medium": 0.5, "low": 0.0}
+
 
 class ProductScorer:
-    """Normalizes raw candidate data into scores for slot selection.
-
-    All scores are relative to the candidate pool (best = 1.0, worst = 0.0).
+    """Scores candidates using Naver Search Ad keyword metrics.
 
     Usage:
         scorer = ProductScorer()
         scores = scorer.score_candidates(candidates)
-        # scores["로보락 Q Revo S"].weighted_total -> 0.82
     """
 
     def score_candidates(
         self, candidates: list[CandidateProduct]
     ) -> dict[str, ProductScores]:
-        """Score all candidates across 5 dimensions.
+        """Score all candidates based on keyword metrics.
 
         Args:
-            candidates: List of CandidateProduct with all data populated.
+            candidates: List of CandidateProduct with keyword_metrics populated.
 
         Returns:
             Dict mapping product name to ProductScores.
@@ -42,106 +38,56 @@ class ProductScorer:
         if not candidates:
             return {}
 
-        sales = self._normalize_sales_presence(candidates)
-        search = self._normalize_search_interest(candidates)
-        sentiment = self._normalize_sentiment(candidates)
-        price_pos = self._normalize_price_position(candidates)
-        resale = self._normalize_resale_retention(candidates)
+        clicks_vals = {
+            c.name: c.keyword_metrics.monthly_clicks if c.keyword_metrics else 0
+            for c in candidates
+        }
+        cpc_vals = {
+            c.name: c.keyword_metrics.avg_cpc if c.keyword_metrics else 0
+            for c in candidates
+        }
+        search_vals = {
+            c.name: c.keyword_metrics.monthly_search_volume if c.keyword_metrics else 0
+            for c in candidates
+        }
+        comp_vals = {
+            c.name: COMPETITION_MAP.get(
+                c.keyword_metrics.competition if c.keyword_metrics else "low", 0.0
+            )
+            for c in candidates
+        }
+
+        norm_clicks = _min_max_normalize(clicks_vals)
+        norm_cpc = _min_max_normalize(cpc_vals)
+        norm_search = _min_max_normalize(search_vals)
 
         scores: dict[str, ProductScores] = {}
         for c in candidates:
-            name = c.name
             ps = ProductScores(
-                product_name=name,
-                sales_presence=sales.get(name, 0.0),
-                search_interest=search.get(name, 0.0),
-                sentiment=sentiment.get(name, 0.5),
-                price_position=price_pos.get(name, 0.5),
-                resale_retention=resale.get(name, 0.0),
-                price_normalized=c.price_position.price_normalized if c.price_position else 0.5,
+                product_name=c.name,
+                clicks_score=norm_clicks.get(c.name, 0.0),
+                cpc_score=norm_cpc.get(c.name, 0.0),
+                search_volume_score=norm_search.get(c.name, 0.0),
+                competition_score=comp_vals.get(c.name, 0.0),
             )
-            scores[name] = ps
+            scores[c.name] = ps
             logger.debug(
-                "Score %s: sales=%.2f search=%.2f sent=%.2f price=%.2f resale=%.2f total=%.2f",
-                name, ps.sales_presence, ps.search_interest,
-                ps.sentiment, ps.price_position, ps.resale_retention,
-                ps.weighted_total,
+                "Score %s: clicks=%.2f cpc=%.2f search=%.2f comp=%.2f total=%.3f",
+                c.name, ps.clicks_score, ps.cpc_score,
+                ps.search_volume_score, ps.competition_score,
+                ps.total_score,
             )
 
         return scores
 
-    @staticmethod
-    def _normalize_sales_presence(
-        candidates: list[CandidateProduct],
-    ) -> dict[str, float]:
-        """Normalize presence_score: score / max_presence_score."""
-        max_presence = max((c.presence_score for c in candidates), default=1)
-        if max_presence == 0:
-            max_presence = 1
-        return {
-            c.name: c.presence_score / max_presence
-            for c in candidates
-        }
 
-    @staticmethod
-    def _normalize_search_interest(
-        candidates: list[CandidateProduct],
-    ) -> dict[str, float]:
-        """Normalize search volume: volume_30d / max_volume."""
-        volumes = {
-            c.name: c.search_interest.volume_30d if c.search_interest else 0.0
-            for c in candidates
-        }
-        max_vol = max(volumes.values(), default=1.0)
-        if max_vol <= 0:
-            max_vol = 1.0
-        return {name: vol / max_vol for name, vol in volumes.items()}
-
-    @staticmethod
-    def _normalize_sentiment(
-        candidates: list[CandidateProduct],
-    ) -> dict[str, float]:
-        """Normalize sentiment: (satisfaction_rate - complaint_rate + 1) / 2.
-
-        Maps [-1, 1] range to [0, 1].
-        """
-        result: dict[str, float] = {}
-        for c in candidates:
-            if c.sentiment and c.sentiment.total_posts > 0:
-                raw = c.sentiment.satisfaction_rate - c.sentiment.complaint_rate
-                result[c.name] = (raw + 1.0) / 2.0
-            else:
-                result[c.name] = 0.5  # Neutral default
-        return result
-
-    @staticmethod
-    def _normalize_price_position(
-        candidates: list[CandidateProduct],
-    ) -> dict[str, float]:
-        """Normalize price tier: premium=1.0, mid=0.5, budget=0.0.
-
-        Note: Higher is NOT inherently better — slot-specific formulas
-        handle the tier semantics differently.
-        """
-        tier_map = {"premium": 1.0, "mid": 0.5, "budget": 0.0}
-        return {
-            c.name: tier_map.get(
-                c.price_position.price_tier if c.price_position else "mid",
-                0.5,
-            )
-            for c in candidates
-        }
-
-    @staticmethod
-    def _normalize_resale_retention(
-        candidates: list[CandidateProduct],
-    ) -> dict[str, float]:
-        """Normalize resale_ratio: ratio / max_ratio."""
-        ratios = {
-            c.name: c.resale_check.resale_ratio if c.resale_check else 0.0
-            for c in candidates
-        }
-        max_ratio = max(ratios.values(), default=1.0)
-        if max_ratio <= 0:
-            max_ratio = 1.0
-        return {name: ratio / max_ratio for name, ratio in ratios.items()}
+def _min_max_normalize(values: dict[str, int | float]) -> dict[str, float]:
+    """Min-max normalize values to 0.0-1.0 range."""
+    if not values:
+        return {}
+    min_val = min(values.values())
+    max_val = max(values.values())
+    spread = max_val - min_val
+    if spread <= 0:
+        return {k: 0.5 for k in values}
+    return {k: (v - min_val) / spread for k, v in values.items()}

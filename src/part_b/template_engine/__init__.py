@@ -4,6 +4,7 @@
 from .renderer import TemplateRenderer, render_blog_post, load_tco_data_from_json
 from .models import (
     BlogPostData,
+    CategoryCriteria,
     CredibilityStats,
     FAQ,
     HomeType,
@@ -20,6 +21,7 @@ __all__ = [
     "render_blog_post",
     "load_tco_data_from_json",
     "BlogPostData",
+    "CategoryCriteria",
     "CredibilityStats",
     "FAQ",
     "HomeType",

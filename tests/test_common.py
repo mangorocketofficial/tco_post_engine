@@ -73,7 +73,7 @@ class TestTCOSummary:
 
     def test_tco_formula(self, sample_tco_data: dict):
         tco = TCOSummary(**sample_tco_data)
-        expected = tco.purchase_price_avg + tco.expected_repair_cost - tco.resale_value_24mo
+        expected = tco.purchase_price_avg + tco.expected_repair_cost - tco.resale_value_2yr
         assert tco.real_cost_3yr == expected
 
 

@@ -1,23 +1,21 @@
 # Module A-0: Product Selector
 
-## Automated Product Selection Engine for TCO Comparison Pipeline
+## 네이버 키워드 메트릭 기반 자동 제품 선정 엔진
 
 ---
 
 ## Overview
 
-This module sits **before** the existing Part A (Data Engine) and answers the critical question:
+TCO 비교 파이프라인의 **첫 번째 단계**로, "어떤 3개 제품을 비교할 것인가?"를 자동으로 결정한다.
 
-> "Which 3 products should we compare?"
+네이버 쇼핑 API에서 후보군을 수집하고, 네이버 검색광고 API의 키워드 메트릭(검색량, 클릭수, CPC, 경쟁도)으로 스코어링하여 **제조사 다양성이 보장된 TOP 3**를 선정한다.
 
-Instead of relying on editorial intuition, the Product Selector uses real market data to identify the optimal 3-product comparison set for any given product category. The selection is grounded in consumer decision architecture: **Stability / Balance / Value** — a framework that maps to how real buyers think about high-ticket electronics.
-
-### Position in Pipeline
+### 파이프라인 내 위치
 
 ```
-[A-0: Product Selector]  ← THIS MODULE
+[A-0: Product Selector]  ← 이 모듈
         ↓
-  3 products selected
+  3개 제품 선정 (JSON)
         ↓
 [A-1~4: TCO Data Engine]
         ↓
@@ -26,343 +24,640 @@ Instead of relying on editorial intuition, the Product Selector uses real market
 
 ---
 
-## Consumer Decision Architecture
+## 실행 방법
 
-### The 3-Slot Framework
+```bash
+# 카테고리 이름으로 바로 실행 (기본 설정 자동 생성)
+python -m src.part_a.product_selector.main --category "드럼세탁기"
 
-When consumers compare high-ticket electronics (300K–1M+ KRW), their mental model almost always falls into three archetypes:
+# YAML 설정 파일 사용 (다나와 카테고리 코드 등 세부 설정)
+python -m src.part_a.product_selector.main --config config/category_robot_vacuum.yaml
 
-| Slot | Consumer Mindset | Product Profile |
-|------|-----------------|-----------------|
-| **Stability** | "I'll pay more if it just works without problems" | Lowest complaint rate, highest resale value, premium brand trust |
-| **Balance** | "Best overall package for the money" | Highest search volume, most reviews, strongest community buzz |
-| **Value** | "Minimum spend for maximum utility" | Lowest price tier with competitive features, high sales volume |
+# 결과를 JSON 파일로 저장
+python -m src.part_a.product_selector.main --category "로봇청소기" --output result.json
 
-**Why exactly 3?**
-- 2 products → binary choice, flat content, low engagement
-- 3 products → natural comparison triangle, clear differentiation, highest conversion
-- 4+ products → choice paralysis, decision fatigue, lower conversion
+# DB 저장
+python -m src.part_a.product_selector.main --category "로봇청소기" --save-db
 
-This 3-slot structure is **category-agnostic**. It works for robot vacuums, air purifiers, dryers, dishwashers, monitors, keyboards — any category where price tiers and reliability variance exist.
+# A-0.1: 블로그 추천 모드
+python -m src.part_a.product_selector.main --mode recommend --keyword "드럼세탁기" --top-n 3
+```
 
 ---
 
-## Data Collection Layer
+## 4단계 파이프라인
 
-### Source 1: Sales Ranking Aggregation
-
-**Objective:** Identify the 10–15 products that are actually selling right now.
-
-| Source | Data Point | Role |
-|--------|-----------|------|
-| Naver Shopping Best | Ranking position, review count | Market validation |
-| Danawa Popular Ranking | Price, ranking, spec summary | Price positioning |
-| Coupang Best Seller | Sales rank, review count, rating | Purchase volume proxy |
-
-**Cross-reference logic:**
 ```
-For each product in category:
-  naver_rank = position in Naver Shopping Best
-  danawa_rank = position in Danawa Popular
-  coupang_rank = position in Coupang Best Seller
-
-  presence_score = count of platforms where product appears in top 20
-  avg_rank = mean(naver_rank, danawa_rank, coupang_rank)
-
-Filter: presence_score >= 2  →  Candidate pool (10–15 products)
+Step 1: 네이버 쇼핑 API → 후보 제품 20개 수집
+Step 2: 네이버 검색광고 API → 키워드 메트릭 조회
+Step 3: 스코어링 → TOP 3 선정 (제조사 다양성 적용)
+Step 4: 검증 (brand_diversity, keyword_data)
 ```
 
-Products appearing on only 1 platform are likely niche or promotional anomalies — excluded.
+### Step 1: 후보 수집 (Naver Shopping API)
 
-### Source 2: Search Interest
+네이버 쇼핑 검색 API(`openapi.naver.com/v1/search/shop.json`)로 카테고리 키워드 검색 → 상위 20개 제품 수집.
 
-**Objective:** Measure real consumer interest level per product.
-
-| Source | Data Point | Access |
-|--------|-----------|--------|
-| Naver DataLab API | Relative search volume (30/90 day) | Public API (legal) |
-| Google Trends | Relative interest | Public API |
-
-**Usage:**
-- Primary ranking signal for the **Balance** slot
-- Trending products (30d > 90d average) flagged as "rising" — potential fresh picks
-
-### Source 3: Community Sentiment
-
-**Objective:** Measure complaint rate and satisfaction signals.
-
-| Source | Keywords | Data Point |
-|--------|----------|-----------|
-| Ppomppu | `{product} + [불만, 후회, 실망, 반품]` | Negative post count |
-| Clien | `{product} + [고장, AS, 수리, 오류]` | Failure/repair post count |
-| Naver Cafe | `{product} + [추천, 만족, 최고, 잘샀다]` | Positive post count |
-
-**Sentiment ratio:**
 ```
-complaint_rate = negative_posts / total_posts
-satisfaction_rate = positive_posts / total_posts
+입력: "드럼세탁기"
+출력: 20개 CandidateProduct (이름, 브랜드, 가격, 제품코드, 순위)
 ```
 
-- Primary ranking signal for the **Stability** slot (lowest complaint_rate wins)
-- Secondary signal for **Value** slot (high satisfaction at low price = strong value)
+| 필드 | 출처 | 설명 |
+|------|------|------|
+| `product_name` | API `title` (HTML 태그 제거) | 전체 제품명 |
+| `brand` | API `brand` | **제품 라인명** (트롬, 그랑데, 비스포크AI콤보 등) |
+| `price` | API `lprice` | 최저가 |
+| `product_code` | API `productId` | 네이버 제품 코드 |
+| `rank` | 결과 순서 (1-based) | 네이버 쇼핑 노출 순위 |
 
-### Source 4: Price Positioning
+> **중요:** 네이버 쇼핑 API의 `brand` 필드는 제조사(삼성, LG)가 아니라 **제품 라인명**(트롬, 그랑데, 비스포크AI콤보)을 반환한다. 일부 제품은 `brand="삼성"` 처럼 제조사명과 동일한 값이 반환되기도 한다.
 
-**Objective:** Classify each product into price tiers.
+### Step 2: 키워드 메트릭 조회 (Naver Search Ad API)
 
-| Source | Data Point |
-|--------|-----------|
-| Danawa | Current lowest price, average price (90d) |
-| Coupang | Current price, sale status |
+각 제품의 `제조사 + 제품라인명` 조합으로 키워드를 생성하고, 검색광고 API에서 메트릭을 조회한다.
 
-**Tier classification:**
+#### 키워드 빌드 로직 (`_build_product_keyword`)
+
 ```
-products_sorted_by_price = sort(candidates, key=avg_price)
+제품명에서 제조사 추출 + brand 필드 조합 → API 키워드
 
-Premium tier  = top 30% by price
-Mid tier      = middle 40% by price
-Budget tier   = bottom 30% by price
-```
-
-### Source 5: Resale Value (Quick Check)
-
-**Objective:** Early signal for value retention — full analysis happens in Part A.
-
-| Source | Data Point |
-|--------|-----------|
-| Danggeun Market | Recent listing prices for used units |
-
-**Quick ratio:**
-```
-resale_ratio = avg_used_price / avg_new_price
+("삼성전자 그랑데 WF19T6000KW 화이트", brand="그랑데")  → "삼성그랑데"
+("LG전자 트롬 오브제 FX25ESR", brand="트롬")            → "LG트롬"
+("삼성전자 비스포크AI콤보 25/18kg", brand="비스포크AI콤보") → "삼성비스포크AI콤보"
+("삼성전자 삼성 WF21DG6650B", brand="삼성")             → "" (스킵 — 너무 포괄적)
 ```
 
-- High resale_ratio → strong brand trust → Stability slot signal
-- Low resale_ratio → fast depreciation → risk flag
+| 조건 | 결과 | 이유 |
+|------|------|------|
+| `brand`가 특정 제품라인명 | `제조사 + brand` | 적절한 제품라인 키워드 |
+| `brand == 제조사` (예: brand="삼성") | `""` (스킵) | "삼성" 전체 브랜드 검색량이 매칭되어 부풀림 |
+| `brand` 없음 | `""` (스킵) | 제조사명만으로는 너무 포괄적 |
 
----
+#### 제조사 추출 (`extract_manufacturer`)
 
-## Scoring & Selection Algorithm
+제품명 prefix에서 제조사를 정규화:
 
-### Step 1: Score Each Candidate
+| Prefix | 추출 결과 |
+|--------|----------|
+| `LG전자 ...` | `LG` |
+| `삼성전자 ...` | `삼성` |
+| `대우전자 ...` | `대우` |
+| `위니아딤채 ...` / `위니아 ...` | `위니아` |
+| `LG ...` (전자 없이) | `LG` |
+| 기타 | `""` (brand로 fallback) |
 
-Each candidate product receives scores across 5 dimensions:
+#### 키워드 그룹핑
 
-| Dimension | Weight | Calculation |
-|-----------|--------|-------------|
-| **Sales Presence** | 20% | `presence_score / max_presence_score` |
-| **Search Interest** | 25% | `search_volume / max_search_volume` |
-| **Sentiment** | 25% | `satisfaction_rate − complaint_rate` (normalized) |
-| **Price Position** | 15% | Tier classification (premium/mid/budget) |
-| **Resale Retention** | 15% | `resale_ratio / max_resale_ratio` |
+동일 키워드를 공유하는 제품끼리 그룹핑 → API 호출 최소화.
 
-### Step 2: Slot Assignment
+```
+20개 제품 → 6~7개 고유 키워드 → API 2회 호출 (배치당 5개)
+```
+
+같은 키워드 그룹의 제품들은 동일한 메트릭을 공유 (`dataclasses.replace()`로 `product_name`만 변경).
+
+#### API 인증
+
+```
+HMAC-SHA256 서명: "{timestamp}.{method}.{uri}"
+헤더: X-Timestamp, X-API-KEY, X-Customer, X-Signature
+```
+
+| 환경변수 | 설명 |
+|---------|------|
+| `NAVER_AD_CUSTOMER_ID` | 광고주 ID |
+| `NAVER_AD_API_KEY` | API 키 |
+| `NAVER_AD_SECRET_KEY` | Secret 키 (HMAC용) |
+
+#### API 응답 매칭
+
+1. 정규화된 exact match (대소문자 무시, 공백 제거)
+2. Substring match (fallback)
+3. 중복 매칭 방지 (`matched_keywords` set)
+
+### Step 3: 스코어링 & TOP 3 선정
+
+#### 스코어 계산 (`ProductScorer`)
+
+4개 차원, min-max 정규화 (0.0~1.0):
+
+| 차원 | 가중치 | 데이터 소스 | 의미 |
+|------|--------|-----------|------|
+| **Monthly Clicks** | 40% | `keyword_metrics.monthly_clicks` | 실제 사용자 참여도 |
+| **Average CPC** | 30% | `keyword_metrics.avg_cpc` | 상업적 가치 (광고 경쟁) |
+| **Search Volume** | 20% | `keyword_metrics.monthly_search_volume` | 소비자 인지도 |
+| **Competition** | 10% | `keyword_metrics.competition` | 시장 검증도 |
 
 ```python
-def select_products(candidates, scores):
-
-    # STABILITY SLOT
-    # Filter: Premium or Mid tier only
-    # Rank by: Sentiment (highest) + Resale Retention (highest)
-    stability_pool = [c for c in candidates if c.price_tier in ['premium', 'mid']]
-    stability_pick = max(stability_pool, key=lambda c:
-        scores[c].sentiment * 0.6 + scores[c].resale_retention * 0.4
-    )
-
-    # BALANCE SLOT
-    # Exclude: stability_pick
-    # Rank by: Search Interest (highest) + Sales Presence (highest)
-    balance_pool = [c for c in candidates if c != stability_pick]
-    balance_pick = max(balance_pool, key=lambda c:
-        scores[c].search_interest * 0.5 + scores[c].sales_presence * 0.3 + scores[c].sentiment * 0.2
-    )
-
-    # VALUE SLOT
-    # Exclude: stability_pick, balance_pick
-    # Filter: Mid or Budget tier only
-    # Rank by: Sales Presence (highest) at lowest price tier
-    value_pool = [c for c in candidates
-        if c != stability_pick
-        and c != balance_pick
-        and c.price_tier in ['mid', 'budget']
-    ]
-    value_pick = max(value_pool, key=lambda c:
-        scores[c].sales_presence * 0.4 + (1 - scores[c].price_normalized) * 0.4 + scores[c].sentiment * 0.2
-    )
-
-    return {
-        'stability': stability_pick,
-        'balance': balance_pick,
-        'value': value_pick
-    }
+total_score = clicks × 0.4 + cpc × 0.3 + search_volume × 0.2 + competition × 0.1
 ```
 
-### Step 3: Validation Checks
+#### TOP 3 선정 (`TopSelector`)
 
-Before finalizing the 3 picks, run these sanity checks:
+1. 전체 후보를 `total_score` 내림차순 정렬
+2. **제조사 다양성 우선**: 이미 선정된 제조사의 제품은 스킵
+3. 다양성으로 3개를 못 채우면 **제약 완화**하여 나머지 충원 (사유에 `(brand diversity relaxed)` 표시)
 
-| Check | Rule | Fallback |
-|-------|------|----------|
-| **Brand diversity** | All 3 should be different brands | If 2 share a brand, swap the lower-scored one for next-best from different brand |
-| **Price spread** | Max price should be ≥ 1.3× min price | If too close, selection lacks differentiation — widen by picking from adjacent tier |
-| **Data sufficiency** | Each product needs ≥ 20 community posts | If under threshold, flag for manual review or substitute |
-| **Recency** | All 3 should be released within last 18 months | Older products deprioritized unless still top-selling |
-| **Availability** | All 3 must be currently purchasable | Check Coupang/Naver stock status |
+```
+예시: 삼성 1.000 → LG 0.619 → [LG 스킵] → 위니아 0.508
+      제조사 다양성 OK: 삼성, LG, 위니아
+```
+
+### Step 4: 검증
+
+| 검증 항목 | 조건 | 설명 |
+|----------|------|------|
+| `brand_diversity` | 선정 3개 제품의 제조사가 모두 다른가 | `c.manufacturer` 기준 (제품라인명이 아닌 실제 제조사) |
+| `keyword_data` | 최소 1개 이상 키워드 메트릭이 있는가 | clicks > 0인 제품 수 확인 |
 
 ---
 
-## Output Format
+## 파일 구조
 
-The module outputs a JSON payload consumed by Part A:
+### 핵심 파일 (현재 파이프라인)
+
+| 파일 | 역할 |
+|------|------|
+| `pipeline.py` | 4단계 파이프라인 오케스트레이터 |
+| `models.py` | 데이터 모델 (`CandidateProduct`, `KeywordMetrics`, `ProductScores`, `SelectedProduct`, `SelectionResult` 등) |
+| `naver_ad_client.py` | 네이버 검색광고 API 클라이언트 (HMAC 인증, 키워드 메트릭 조회) |
+| `scorer.py` | 키워드 메트릭 기반 스코어링 (min-max 정규화, 가중 합산) |
+| `slot_selector.py` | TOP 3 선정 (제조사 다양성 적용) |
+| `sales_ranking_scraper.py` | 네이버 쇼핑 / 다나와 / 쿠팡 랭킹 수집 |
+| `category_config.py` | 카테고리 설정 (YAML 로드/저장) |
+| `main.py` | CLI 진입점 (`--category`, `--config`, `--mode`) |
+
+### 보조 파일
+
+| 파일 | 역할 |
+|------|------|
+| `danawa_category_resolver.py` | 다나와 검색 페이지에서 카테고리 코드 자동 추출 |
+| `price_classifier.py` | 가격 티어 분류 (premium / mid / budget) |
+| `resale_quick_checker.py` | 당근마켓 리세일 비율 간이 조회 |
+| `search_interest_scraper.py` | 네이버 데이터랩 검색 관심도 |
+| `sentiment_scraper.py` | 뽐뿌/클리앙/네이버카페 커뮤니티 감성 |
+| `candidate_aggregator.py` | 다중 플랫폼 후보 교차 검증 (레거시) |
+| `validator.py` | 확장 검증 로직 (레거시) |
+
+### A-0.1: 블로그 추천 파이프라인
+
+| 파일 | 역할 |
+|------|------|
+| `recommendation_pipeline.py` | 블로그 검색 → 제품 추출 → 빈도 집계 오케스트레이터 |
+| `blog_recommendation_scraper.py` | 네이버 블로그 + Google SerpAPI 검색 |
+| `product_name_extractor.py` | DeepSeek LLM으로 블로그 제목/본문에서 제품명 추출 |
+
+---
+
+## 데이터 모델
+
+### CandidateProduct
+
+```python
+@dataclass
+class CandidateProduct:
+    name: str                           # "삼성전자 비스포크 그랑데 드럼 세탁기 AI 24kg ..."
+    brand: str                          # "비스포크" (제품 라인명, 네이버 쇼핑 API)
+    category: str                       # "드럼세탁기"
+    product_code: str = ""              # 네이버 제품 ID
+    price: int = 0                      # 최저가 (KRW)
+    naver_rank: int = 0                 # 네이버 쇼핑 노출 순위
+    keyword_metrics: KeywordMetrics | None = None  # Step 2에서 채워짐
+
+    @property
+    def manufacturer(self) -> str:      # "삼성" (제품명에서 추출, brand로 fallback)
+```
+
+### KeywordMetrics
+
+```python
+@dataclass
+class KeywordMetrics:
+    product_name: str
+    monthly_search_volume: int = 0      # PC + Mobile 월간 검색량
+    monthly_clicks: int = 0             # PC + Mobile 월간 클릭수
+    avg_cpc: int = 0                    # 평균 클릭 단가 (KRW)
+    competition: str = "low"            # "high" | "medium" | "low"
+```
+
+### ProductScores
+
+```python
+@dataclass
+class ProductScores:
+    product_name: str
+    clicks_score: float = 0.0           # 0.0~1.0 정규화
+    cpc_score: float = 0.0
+    search_volume_score: float = 0.0
+    competition_score: float = 0.0
+
+    @property
+    def total_score(self) -> float:     # 가중 합산
+        # clicks×0.4 + cpc×0.3 + search_volume×0.2 + competition×0.1
+```
+
+---
+
+## 출력 형식
 
 ```json
 {
-  "category": "robot_vacuum",
-  "selection_date": "2026-02-07",
+  "category": "드럼세탁기",
+  "selection_date": "2026-02-08",
   "data_sources": {
-    "sales_rankings": ["naver_shopping", "danawa", "coupang"],
-    "search_volume": "naver_datalab",
-    "community_sentiment": ["ppomppu", "clien"],
-    "price_data": "danawa",
-    "resale_check": "danggeun"
+    "candidates": "naver_shopping_api",
+    "scoring": "naver_searchad_api"
   },
-  "candidate_pool_size": 12,
+  "candidate_pool_size": 20,
   "selected_products": [
     {
-      "slot": "stability",
-      "name": "로보락 Q Revo S",
-      "brand": "Roborock",
-      "price_tier": "premium",
+      "rank": 1,
+      "name": "삼성전자 비스포크 그랑데 드럼 세탁기 AI 24kg ...",
+      "brand": "비스포크",
+      "price": 1299000,
       "selection_reasons": [
-        "Lowest complaint_rate (0.08) among premium tier",
-        "Highest resale_ratio (0.45) in category",
-        "Presence on all 3 sales platforms"
+        "Monthly clicks: 57",
+        "Avg CPC: 10원",
+        "Monthly searches: 8,230",
+        "Competition: high",
+        "Total score: 1.000"
       ],
       "scores": {
-        "sales_presence": 0.92,
-        "search_interest": 0.78,
-        "sentiment": 0.91,
-        "price_position": "premium",
-        "resale_retention": 0.95
+        "clicks_score": 1.0,
+        "cpc_score": 1.0,
+        "search_volume_score": 1.0,
+        "competition_score": 1.0,
+        "total_score": 1.0
       }
-    },
-    {
-      "slot": "balance",
-      "name": "드리미 L10s Pro Ultra Heat",
-      "brand": "Dreame",
-      "price_tier": "premium",
-      "selection_reasons": [
-        "Highest search volume in category (30d)",
-        "Most reviews on Coupang (2,847)",
-        "Strong sentiment score with feature-rich positioning"
-      ],
-      "scores": { "..." : "..." }
-    },
-    {
-      "slot": "value",
-      "name": "에코백스 T30 Pro Omni",
-      "brand": "Ecovacs",
-      "price_tier": "budget",
-      "selection_reasons": [
-        "Lowest avg price in candidate pool",
-        "Top 3 in Coupang Best Seller",
-        "High sales presence despite mixed sentiment"
-      ],
-      "scores": { "..." : "..." }
     }
   ],
   "validation": {
-    "brand_diversity": "PASS — 3 unique brands",
-    "price_spread": "PASS — 1.46x ratio (650K to 950K)",
-    "data_sufficiency": "PASS — min 47 community posts per product",
-    "recency": "PASS — all released within 12 months",
-    "availability": "PASS — all in stock on Coupang"
+    "brand_diversity": "FAIL — 2 unique manufacturers: LG, 삼성",
+    "keyword_data": "PASS — 3/3 products have keyword metrics"
   }
 }
 ```
 
 ---
 
-## Refresh Strategy
+## 카테고리 설정
 
-| Trigger | Action |
-|---------|--------|
-| **Scheduled (monthly)** | Re-run full selection pipeline; if picks change, flag for review |
-| **New product launch** | Inject into candidate pool and re-score; may displace existing pick |
-| **Pick goes out of stock** | Auto-substitute with next-best in same slot |
-| **Sentiment shift** | If complaint_rate doubles in 30 days, flag stability pick for review |
+### 방법 1: 카테고리 이름으로 즉시 실행
 
-### Change Management
+```bash
+python -m src.part_a.product_selector.main --category "벽걸이TV"
+```
 
-When the selector recommends a product swap:
-1. **Auto-generate** new TCO data via Part A
-2. **Auto-generate** updated blog post via Part B
-3. **Notify** via dashboard alert (mangorocket-stats integration)
-4. **Archive** old post or add "updated" banner with new recommendation
+`CategoryConfig.from_category_name("벽걸이TV")` → 기본 설정으로 자동 생성.
+
+### 방법 2: YAML 설정 파일
+
+```yaml
+# config/category_drum_washer.yaml
+name: "드럼세탁기"
+search_terms: ["드럼세탁기"]
+danawa_category_code: "10248425"
+negative_keywords: ["불만", "후회", "실망", "반품", "고장", "AS", "수리", "오류"]
+positive_keywords: ["추천", "만족", "최고", "잘샀다", "좋아요", "강추"]
+price_range:
+  min: 300000
+  max: 3000000
+max_product_age_months: 18
+min_community_posts: 20
+```
+
+`danawa_category_code`가 없으면 `DanawaCategoryResolver`가 검색 페이지에서 자동 추출을 시도한다.
 
 ---
 
-## Category Expansion
+## 필요 환경변수
 
-To run this selector on a new category, provide:
+```env
+# 네이버 쇼핑 검색 API (Step 1)
+NAVER_DATALAB_CLIENT_ID=...
+NAVER_DATALAB_CLIENT_SECRET=...
+
+# 네이버 검색광고 API (Step 2)
+NAVER_AD_CUSTOMER_ID=...
+NAVER_AD_API_KEY=...
+NAVER_AD_SECRET_KEY=...
+```
+
+---
+
+## 테스트
+
+```bash
+# 전체 프로젝트 테스트
+pytest tests/
+
+# Product Selector 테스트만 (122 tests)
+pytest tests/part_a/test_product_selector.py -v
+
+# A-0.1 추천 파이프라인 테스트만 (55 tests)
+pytest tests/part_a/test_recommendation.py -v
+```
+
+### 테스트 커버리지
+
+| 테스트 클래스 | 항목 수 | 대상 |
+|-------------|--------|------|
+| TestExtractManufacturer | 5 | 제조사 추출 로직 |
+| TestManufacturerProperty | 3 | CandidateProduct.manufacturer fallback |
+| TestBuildProductKeyword | 8 | 키워드 빌드 + 포괄적 키워드 스킵 |
+| TestCleanKeyword | 14 | 키워드 클리닝 (레거시, 참조용) |
+| TestNaverAdClient | 6 | API 파싱, 대소문자, 중복 방지 |
+| TestNaverAdClientHelpers | 6 | `_safe_int`, `_map_competition` |
+| TestProductScorer | 3 | 스코어링 정규화 |
+| TestTopSelector | 5 | TOP 3 선정, 다양성, relaxation |
+| 기타 모델/스크래퍼 | 72+ | 데이터 모델, HTML 파싱 등 |
+
+---
+
+## 해결된 기술 이슈
+
+### 1. HMAC 서명 오류 (403)
+
+**문제:** `{timestamp}.{uri}` 형식 → 403 Forbidden
+**해결:** `{timestamp}.{method}.{uri}` 형식으로 수정 (`GET` 포함 필수)
+
+### 2. 키워드 400 에러
+
+**문제:** 제품명에 공백 포함 → API 400 에러
+**해결:** `_build_product_keyword()`에서 `.replace(" ", "")` 처리
+
+### 3. 브랜드 수준 검색량 부풀림
+
+**문제:** 키워드 "LG트롬" → 월간검색 98,100 (브랜드 전체 수치가 개별 제품에 배정)
+**해결:** 제품명 클리닝 → 제조사+제품라인 기반 키워드로 전환. 동일 키워드 그룹은 메트릭 공유.
+
+### 4. 브랜드 다양성 오판
+
+**문제:** 네이버 쇼핑 `brand` 필드가 제품라인명(트롬, 그랑데, 비스포크AI콤보) → 모두 다른 브랜드로 인식
+**해결:** `extract_manufacturer()`로 제품명에서 실제 제조사(삼성, LG) 추출. `manufacturer` 기준 다양성 체크.
+
+### 5. 포괄적 키워드 "삼성" 부풀림
+
+**문제:** `brand="삼성"` (제조사명과 동일) → 키워드 "삼성" → 월간검색 246,500 배정
+**해결:** `brand == manufacturer`이면 키워드 생성 스킵. 해당 제품은 `keyword_metrics=None` → 점수 낮아짐.
+
+---
+
+## A-0.1: 블로그 가성비 추천 Top 제품 탐색기
+
+A-0과 별개로, **블로그 검색 기반 가성비 추천 제품**을 자동으로 찾아내는 파이프라인.
+
+사용자가 "드럼세탁기" 같은 카테고리 키워드를 입력하면, "가성비 드럼세탁기"로 네이버/구글 블로그를 검색하여 커뮤니티에서 실제로 가장 많이 추천된 **Top 1, 2 제품**을 자동으로 선별한다.
+
+### 실행 방법
+
+```bash
+# 기본 실행 (Top 2)
+python -m src.part_a.product_selector.main --mode recommend --keyword "드럼세탁기"
+
+# Top 3 추출
+python -m src.part_a.product_selector.main --mode recommend --keyword "드럼세탁기" --top-n 3
+
+# 결과를 JSON 파일로 저장
+python -m src.part_a.product_selector.main --mode recommend --keyword "로봇청소기" --output result.json
+```
+
+### 파이프라인 흐름
+
+```
+사용자 입력: "드럼세탁기"
+    ↓
+Step 1: "가성비 드럼세탁기" 쿼리 생성
+    ↓
+Step 2: 네이버 블로그 API (50개) + Google SerpAPI (50개) = 블로그 ~100개 수집
+    ↓
+Step 3: DeepSeek LLM에 배치 전송 (5개씩 묶어 ~20회 호출)
+    → 각 글에서 언급된 구체적 제품명(브랜드+모델명) 추출
+    ↓
+Step 4: 모델코드 기반 그룹핑 → 빈도 카운트 → Top N 확정
+    ↓
+RecommendationResult 반환
+```
+
+### Step 1-2: 블로그 검색 (`blog_recommendation_scraper.py`)
+
+두 가지 검색 소스를 사용:
+
+| 소스 | API | 건수 | 특징 |
+|------|-----|------|------|
+| **네이버** | Naver Blog Search API (`openapi.naver.com/v1/search/blog.json`) | 50개 | `X-Naver-Client-Id/Secret` 헤더 인증, `display` 최대 100, `sort=sim` |
+| **구글** | SerpAPI (`google-search-results` SDK) | 50개 | 페이지당 10개, `hl=ko`, `gl=kr` |
+
+- 검색 쿼리: `"가성비 {keyword}"` (예: "가성비 드럼세탁기")
+- 네이버 API 응답의 HTML 태그(`<b>`, `</b>` 등)는 자동 제거
+- API 키 미설정 시 해당 소스는 빈 리스트 반환 (graceful degradation)
+
+### Step 3: 제품명 추출 (`product_name_extractor.py`)
+
+**DeepSeek API**를 OpenAI SDK 호환 방식으로 호출하여 블로그 제목/스니펫에서 구체적 제품명을 추출한다.
+
+| 항목 | 설정 |
+|------|------|
+| API Endpoint | `https://api.deepseek.com` (OpenAI SDK `base_url`) |
+| 모델 | `deepseek-chat` |
+| Temperature | `0.1` |
+| 배치 크기 | 5개 snippet/호출 |
+| API 키 | `os.getenv("DEEPSEEK_API_KEY")` |
+
+#### 프롬프트 구조
+
+```
+다음은 "{keyword}" 관련 블로그 검색 결과입니다.
+각 글에서 추천하는 구체적인 제품명(브랜드 + 모델명)을 추출해주세요.
+
+[1] 제목: ...
+    내용: ...
+    출처: https://...
+
+JSON 배열로 반환: ["삼성전자 그랑데 AI WF24B9600KW", "LG 트롬 오브제컬렉션 FX25ESR", ...]
+```
+
+#### 응답 파싱
+
+1. 직접 JSON 파싱 시도
+2. 마크다운 코드 블록 (`\`\`\`json ... \`\`\``) 내부 추출
+3. Fallback: 정규식으로 한글+영문+숫자 패턴 추출
+
+### Step 4: 빈도 집계 & 랭킹 (`recommendation_pipeline.py`)
+
+#### 모델코드 기반 그룹핑
+
+단순 문자열 비교로는 같은 제품이 다르게 인식되는 문제를 해결하기 위해, **모델코드(alphanumeric code) 기반 그룹핑**을 사용한다.
+
+**문제 상황:**
+```
+"삼성전자 그랑데 WF19T6000KW"     → 1회
+"삼성 WF19T6000KW"               → 1회
+"삼성전자 드럼세탁기 WF19T6000KW"  → 1회
+→ 실제로는 같은 제품인데 3개로 분리됨 (합산하면 3회)
+```
+
+**해결 전략 (3-Phase):**
+
+| Phase | 대상 | 방법 |
+|-------|------|------|
+| Phase 1 | 모델코드 있는 제품 | 모델코드 추출 → 동일 코드끼리 그룹핑 |
+| Phase 2 | 모델코드 없는 제품 | 정규화된 이름으로 그룹핑 (fallback) |
+| Phase 3 | 전체 | 통합 정렬 → Top N 추출 |
+
+#### 모델코드 추출 (`_extract_model_code`)
+
+- **조건:** 5자 이상, 영문자와 숫자가 모두 포함된 토큰
+- **하이픈 처리:** `GR-B267CEB` → `GRB267CEB`으로 정규화
+- **제외:** 순수 숫자(`12345678`), 순수 알파벳(`ABCDEF`), 4자 이하 토큰
+
+```
+"삼성전자 그랑데 WF19T6000KW"  → WF19T6000KW
+"LG전자 트롬 F21VDSK"         → F21VDSK
+"LG 트롬 GR-B267CEB"          → GRB267CEB
+"LG 트롬 오브제컬렉션"          → "" (모델코드 없음 → Phase 2 fallback)
+```
+
+#### 정규화 (`_normalize_name`, Phase 2 fallback)
+
+모델코드가 없는 제품명에 적용:
+- NFKC 유니코드 정규화
+- 소문자 변환
+- 괄호/대괄호 내용 제거: `(화이트)`, `[32kg]`, `（실버）`
+- 공백 정리
+
+### 파일 구조
+
+| 파일 | 역할 |
+|------|------|
+| `recommendation_pipeline.py` | 전체 흐름 오케스트레이터 (검색 → 추출 → 집계) |
+| `blog_recommendation_scraper.py` | 네이버 Blog API + Google SerpAPI 검색 |
+| `product_name_extractor.py` | DeepSeek LLM으로 블로그 snippet에서 제품명 추출 |
+
+### 데이터 모델 (`models.py` 에 추가)
 
 ```python
-category_config = {
-    "name": "air_purifier",
-    "search_terms": ["공기청정기"],
-    "negative_keywords": ["필터 냄새", "소음", "고장", "AS", "반품"],
-    "positive_keywords": ["추천", "만족", "조용", "잘샀다"],
-    "price_range": {"min": 200000, "max": 800000},  # KRW
-    "max_product_age_months": 18,
-    "min_community_posts": 20
+@dataclass
+class BlogSearchResult:
+    title: str           # 블로그 제목
+    snippet: str         # 본문 요약
+    link: str            # URL
+    source: str          # "naver" | "google"
+    rank: int            # 검색 결과 내 순위
+
+@dataclass
+class ProductMention:
+    product_name: str      # 원본 추출명 (가장 많이 등장한 형태)
+    normalized_name: str   # 그룹 키 (모델코드 or 정규화명)
+    mention_count: int     # 언급 횟수
+    sources: list[str]     # 언급된 블로그 출처 URL
+
+@dataclass
+class RecommendationResult:
+    keyword: str                          # 원본 키워드
+    search_query: str                     # 실제 검색 쿼리
+    total_blogs_searched: int             # 검색된 블로그 수
+    total_products_extracted: int         # 추출된 제품명 총 수
+    top_products: list[ProductMention]    # Top N 제품
+    search_date: str                      # 실행 일시
+```
+
+### 출력 예시
+
+```json
+{
+  "keyword": "드럼세탁기",
+  "search_query": "가성비 드럼세탁기",
+  "total_blogs_searched": 96,
+  "total_products_extracted": 70,
+  "top_products": [
+    {
+      "product_name": "삼성전자 그랑데 WF19T6000KW",
+      "normalized_name": "WF19T6000KW",
+      "mention_count": 8,
+      "sources": ["https://blog.naver.com/...", "https://example.com/..."]
+    },
+    {
+      "product_name": "LG전자 트롬 F21VDSK",
+      "normalized_name": "F21VDSK",
+      "mention_count": 5,
+      "sources": ["https://blog.naver.com/...", "https://example.com/..."]
+    }
+  ],
+  "search_date": "2026-02-08T15:30:00"
 }
 ```
 
-Everything else — scoring weights, slot logic, validation checks — remains identical.
+### 필요 환경변수
+
+```env
+# 네이버 블로그 검색 API (네이버 소스)
+NAVER_CLIENT_ID=...
+NAVER_CLIENT_SECRET=...
+
+# SerpAPI (구글 소스)
+SERPAPI_KEY=...
+
+# DeepSeek API (제품명 추출)
+DEEPSEEK_API_KEY=...
+```
+
+### 테스트
+
+```bash
+# A-0.1 추천 파이프라인 테스트 (55 tests)
+pytest tests/part_a/test_recommendation.py -v
+```
+
+| 테스트 클래스 | 항목 수 | 대상 |
+|-------------|--------|------|
+| TestBlogSearchResult | 2 | 모델 생성, 직렬화 |
+| TestProductMention | 3 | 모델 생성, 직렬화, 기본값 |
+| TestRecommendationResult | 3 | 모델 생성, 직렬화, JSON |
+| TestBlogRecommendationScraper | 12 | 네이버 API 파싱, 구글 페이징, graceful degradation |
+| TestProductNameExtractor | 10 | 배치 처리, 프롬프트, JSON 파싱, 에러 처리 |
+| TestRecommendationPipeline | 16 | 정규화, 모델코드 추출, 그룹핑, 전체 흐름, 직렬화 |
+
+### 해결된 기술 이슈
+
+#### 1. SerpAPI Naver 엔진 0건 반환
+
+**문제:** SerpAPI의 `engine="naver"` + `where=post` 조합으로 네이버 블로그를 검색했으나 0건 반환
+**해결:** 네이버 검색은 **Naver Blog Search API** (`openapi.naver.com/v1/search/blog.json`)를 직접 사용하도록 변경. SerpAPI는 구글 검색에만 사용.
+
+#### 2. 제품명 중복 인식 실패 (정규화 한계)
+
+**문제:** 68개 추출 → 62개 고유 이름. 같은 모델(WF19T6000KW)이 "삼성전자 그랑데 WF19T6000KW", "삼성 WF19T6000KW", "삼성전자 드럼세탁기 WF19T6000KW" 등으로 분산됨. 단순 lowercase + 괄호 제거로는 병합 불가.
+**해결:** **모델코드 기반 그룹핑** 도입. 제품명에서 모델코드(영문+숫자 조합 5자 이상)를 추출하고, 동일 모델코드를 가진 항목을 하나로 그룹핑. 모델코드가 없는 제품은 정규화된 이름으로 fallback.
 
 ---
 
-## Development Estimate
-
-| Task | Effort | Dependency |
-|------|--------|-----------|
-| Sales ranking scrapers (3 platforms) | 3 days | None |
-| Naver DataLab API integration | 1 day | None |
-| Community sentiment scraper + GPT classifier | 3 days | GPT API key |
-| Price tier classifier | 0.5 day | Sales ranking data |
-| Resale quick-check scraper | 1 day | None |
-| Scoring algorithm + slot assignment | 1 day | All scrapers |
-| Validation checks | 0.5 day | Scoring algorithm |
-| JSON output + Part A integration | 0.5 day | Scoring algorithm |
-| **Total** | **~10 days** | |
-
----
-
-## Integration with Main Pipeline
+## 파이프라인 통합
 
 ```
-[A-0: Product Selector]        ← 10 days
+[A-0: Product Selector]
   │
-  │  Output: 3 products + metadata JSON
+  │  Output: 3개 제품 + 키워드 메트릭 JSON
   ▼
 [A-1: Price Tracker]           ─┐
 [A-2: Resale Tracker]           │
-[A-3: Repair Analyzer]          ├─ Part A (existing plan)
+[A-3: Repair Analyzer]          ├─ Part A (TCO 데이터 수집)
 [A-4: Maintenance Calculator]  ─┘
   │
-  │  Output: TCO data per product
+  │  Output: 제품별 TCO 데이터
   ▼
 [B-1: Template Engine]         ─┐
-[B-2: Content Writer]           ├─ Part B (existing plan)
+[B-2: Content Writer]           ├─ Part B (콘텐츠 생성)
 [B-3: CTA Manager]             ─┘
   │
-  │  Output: Published blog post
+  │  Output: 블로그 포스트
   ▼
-[B-4: Stats Dashboard]         ─── mangorocket-stats
+[B-4: Stats Dashboard]
 ```
 
 ---
 
-*Module version: 1.0*
-*Last updated: 2026-02-07*
-*Parent document: TCO-Driven Affiliate Marketing Automation System v1.0*
+*Module version: 2.1 (A-0.1 블로그 추천 파이프라인 추가)*
+*Last updated: 2026-02-08*
+*Parent document: TCO-Driven Affiliate Marketing Automation System*

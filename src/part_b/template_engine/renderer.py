@@ -115,7 +115,9 @@ def load_tco_data_from_json(json_path: Path) -> list[Product]:
         tco = TCOData(
             purchase_price_avg=tco_data.get("purchase_price_avg", 0),
             purchase_price_min=tco_data.get("purchase_price_min", 0),
-            resale_value_24mo=tco_data.get("resale_value_24mo", 0),
+            resale_value_1yr=tco_data.get("resale_value_1yr", 0),
+            resale_value_2yr=tco_data.get("resale_value_2yr", 0),
+            resale_value_3yr_plus=tco_data.get("resale_value_3yr_plus", 0),
             expected_repair_cost=tco_data.get("expected_repair_cost", 0),
             real_cost_3yr=tco_data.get("real_cost_3yr", 0),
             as_turnaround_days=tco_data.get("as_turnaround_days", 0),

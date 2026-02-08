@@ -36,15 +36,19 @@ class ResaleRecord:
 class ResaleCurve:
     """Price retention curve for a product over time.
 
-    retention_pct = resale_price / original_price at each interval.
+    Buckets: 1yr (≤18mo), 2yr (18-30mo), 3yr_plus (>30mo).
+    Uses median resale price for robustness against outliers.
+    retention_pct = median(resale_price) / original_price at each interval.
     """
 
     product_name: str
     original_price: int
-    retention_6mo: float | None = None   # percentage (0-100)
-    retention_12mo: float | None = None
-    retention_18mo: float | None = None
-    retention_24mo: float | None = None
+    retention_1yr: float | None = None   # percentage (0-100)
+    retention_2yr: float | None = None
+    retention_3yr_plus: float | None = None
+    median_price_1yr: int | None = None  # median resale price (KRW)
+    median_price_2yr: int | None = None
+    median_price_3yr_plus: int | None = None
     sample_counts: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -52,10 +56,14 @@ class ResaleCurve:
             "product_name": self.product_name,
             "original_price": self.original_price,
             "resale_curve": {
-                "6mo": self.retention_6mo,
-                "12mo": self.retention_12mo,
-                "18mo": self.retention_18mo,
-                "24mo": self.retention_24mo,
+                "1yr": self.retention_1yr,
+                "2yr": self.retention_2yr,
+                "3yr_plus": self.retention_3yr_plus,
+            },
+            "median_prices": {
+                "1yr": self.median_price_1yr,
+                "2yr": self.median_price_2yr,
+                "3yr_plus": self.median_price_3yr_plus,
             },
             "sample_counts": self.sample_counts,
         }

@@ -56,10 +56,16 @@ MOCK_ENRICHMENT_RESPONSE = json.dumps({
             "answer": "브랜드별로 3-9일 소요되며, 삼성이 가장 빠릅니다."
         },
     ],
+    "category_criteria": {
+        "myth_busting": "흡입력 Pa 수치 차이는 실제 픽업률에 거의 영향이 없습니다.",
+        "real_differentiator": "물걸레 위생 관리 시스템이 진짜 차별점입니다.",
+        "decision_fork": "전선이 많은 집은 카메라 AI, 깔끔한 집은 LiDAR만으로 충분합니다.",
+    },
     "products": [
         {
             "product_id": "roborock-q-revo-s",
             "highlight": "3년 실질 비용 53만원으로 최저 — 가성비 끝판왕",
+            "slot_label": "최소 비용 실속",
             "verdict": "recommend",
             "recommendation_reason": "TCO가 가장 낮고 유지보수도 간편합니다.",
             "caution_reason": ""
@@ -67,6 +73,7 @@ MOCK_ENRICHMENT_RESPONSE = json.dumps({
         {
             "product_id": "samsung-bespoke-jet-ai",
             "highlight": "삼성 AS 네트워크 — 수리 3일 만에 완료",
+            "slot_label": "고장 스트레스 제로",
             "verdict": "recommend",
             "recommendation_reason": "AS가 빠르고 소프트웨어 업데이트가 꾸준합니다.",
             "caution_reason": ""
@@ -74,6 +81,7 @@ MOCK_ENRICHMENT_RESPONSE = json.dumps({
         {
             "product_id": "ecovacs-x2-combo",
             "highlight": "핸디+로봇 2-in-1이지만 수리 비용 주의",
+            "slot_label": "풀옵션 올인원",
             "verdict": "caution",
             "recommendation_reason": "",
             "caution_reason": "기대 수리비가 12만원으로 가장 높고, AS 소요일이 8.5일입니다."
@@ -126,14 +134,16 @@ class TestFullPipeline:
         roborock = next(p for p in blog_data.products if p.product_id == "roborock-q-revo-s")
         assert roborock.tco.purchase_price_avg == 899000
         assert roborock.tco.purchase_price_min == 849000
-        assert roborock.tco.resale_value_24mo == 450000
+        assert roborock.tco.resale_value_1yr == 650000
+        assert roborock.tco.resale_value_2yr == 450000
+        assert roborock.tco.resale_value_3yr_plus == 315000
         assert roborock.tco.expected_repair_cost == 85000
         assert roborock.tco.real_cost_3yr == 534000
 
         # Check resale curve preserved
         assert roborock.resale_curve is not None
-        assert roborock.resale_curve.mo_6 == 85
-        assert roborock.resale_curve.mo_24 == 50
+        assert roborock.resale_curve.yr_1 == 72
+        assert roborock.resale_curve.yr_3_plus == 35
 
         # Check repair stats preserved
         assert roborock.repair_stats is not None
@@ -357,22 +367,24 @@ class TestDataContractCompliance:
             tco = p["tco"]
             assert "purchase_price_avg" in tco
             assert "purchase_price_min" in tco
-            assert "resale_value_24mo" in tco
+            assert "resale_value_1yr" in tco
+            assert "resale_value_2yr" in tco
+            assert "resale_value_3yr_plus" in tco
             assert "expected_repair_cost" in tco
             assert "real_cost_3yr" in tco
             assert "as_turnaround_days" in tco
             assert "monthly_maintenance_minutes" in tco
 
-            # TCO formula check
+            # TCO formula check (uses 2yr resale)
             expected_real_cost = (
                 tco["purchase_price_avg"]
                 + tco["expected_repair_cost"]
-                - tco["resale_value_24mo"]
+                - tco["resale_value_2yr"]
             )
             assert tco["real_cost_3yr"] == expected_real_cost, (
                 f"TCO formula mismatch for {p['name']}: "
                 f"{tco['purchase_price_avg']} + {tco['expected_repair_cost']} "
-                f"- {tco['resale_value_24mo']} = {expected_real_cost}, "
+                f"- {tco['resale_value_2yr']} = {expected_real_cost}, "
                 f"but got {tco['real_cost_3yr']}"
             )
 

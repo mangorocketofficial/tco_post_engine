@@ -1,7 +1,8 @@
-"""CLI entry point for the resale tracker module.
+"""CLI entry point for the multi-platform resale tracker.
 
 Usage:
     python -m src.part_a.resale_tracker.main --keyword "로보락 Q Revo S"
+    python -m src.part_a.resale_tracker.main --keyword "삼성 김치플러스" --platform all
     python -m src.part_a.resale_tracker.main --keyword "로보락 Q Revo S" --original-price 1500000
 """
 
@@ -15,7 +16,9 @@ from datetime import date
 
 from ..common.config import Config
 from ..database.connection import init_db
+from .bunjang_scraper import BunjangScraper
 from .danggeun_scraper import DanggeunScraper
+from .models import ResaleRecord
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,9 +26,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Registry of available scrapers
+SCRAPERS = {
+    "danggeun": DanggeunScraper,
+    "bunjang": BunjangScraper,
+}
+
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Danggeun Resale Tracker")
+    parser = argparse.ArgumentParser(description="Multi-Platform Resale Tracker")
     parser.add_argument(
         "--keyword",
         type=str,
@@ -33,10 +42,18 @@ def main() -> None:
         help="Product search keyword (e.g., '로보락 Q Revo S')",
     )
     parser.add_argument(
+        "--platform",
+        type=str,
+        nargs="+",
+        default=["all"],
+        choices=["danggeun", "bunjang", "all"],
+        help="Platforms to search (default: all)",
+    )
+    parser.add_argument(
         "--max-results",
         type=int,
         default=30,
-        help="Max listings to collect (default: 30)",
+        help="Max listings per platform (default: 30)",
     )
     parser.add_argument(
         "--original-price",
@@ -70,42 +87,64 @@ def main() -> None:
     if args.release_date:
         release_date = date.fromisoformat(args.release_date)
 
-    with DanggeunScraper(config) as scraper:
-        logger.info("Searching Danggeun Market for: %s", args.keyword)
-        records = scraper.search_sold_items(args.keyword, args.max_results)
+    # Determine which platforms to search
+    platforms = list(SCRAPERS.keys()) if "all" in args.platform else args.platform
 
-        for record in records:
-            logger.info(
-                "  [%s] %s — %s원 (%s)",
-                record.condition,
-                record.product_name[:40],
-                f"{record.sale_price:,}",
-                record.listing_date or "unknown date",
-            )
+    all_records: list[ResaleRecord] = []
 
-        if args.save_db and records:
-            inserted = scraper.save_records_to_db(records)
-            logger.info("Saved %d records to database", inserted)
+    for platform_name in platforms:
+        scraper_cls = SCRAPERS[platform_name]
+        with scraper_cls(config) as scraper:
+            logger.info("Searching %s for: %s", platform_name, args.keyword)
+            records = scraper.search_sold_items(args.keyword, args.max_results)
+            all_records.extend(records)
 
-        output_data: dict = {
-            "keyword": args.keyword,
-            "total_sold_listings": len(records),
-            "records": [r.to_dict() for r in records],
-        }
+            if args.save_db and records:
+                inserted = scraper.save_records_to_db(records)
+                logger.info("Saved %d records from %s", inserted, platform_name)
 
-        if args.original_price and records:
+    # Log results
+    for record in all_records:
+        logger.info(
+            "  [%s][%s] %s — %s원 (%s)",
+            record.platform,
+            record.condition,
+            record.product_name[:40],
+            f"{record.sale_price:,}",
+            record.listing_date or "unknown date",
+        )
+
+    output_data: dict = {
+        "keyword": args.keyword,
+        "platforms": platforms,
+        "total_sold_listings": len(all_records),
+        "records_by_platform": {
+            p: sum(1 for r in all_records if r.platform == p)
+            for p in platforms
+        },
+        "records": [r.to_dict() for r in all_records],
+    }
+
+    if args.original_price and all_records:
+        # Use any scraper instance for the shared calculation
+        scraper_cls = SCRAPERS[platforms[0]]
+        with scraper_cls(config) as scraper:
             curve = scraper.calculate_retention_curve(
-                records,
+                all_records,
                 original_price=args.original_price,
                 release_date=release_date,
             )
             output_data["retention_curve"] = curve.to_dict()
-            logger.info("Retention curve: %s", curve.to_dict()["resale_curve"])
+            logger.info(
+                "Retention curve: %s | Median prices: %s",
+                curve.to_dict()["resale_curve"],
+                curve.to_dict()["median_prices"],
+            )
 
-        if args.output:
-            with open(args.output, "w", encoding="utf-8") as f:
-                json.dump(output_data, f, ensure_ascii=False, indent=2)
-            logger.info("Output written to %s", args.output)
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as f:
+            json.dump(output_data, f, ensure_ascii=False, indent=2)
+        logger.info("Output written to %s", args.output)
 
 
 if __name__ == "__main__":

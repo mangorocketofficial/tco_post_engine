@@ -148,28 +148,26 @@ class SelectionValidator:
     def _check_data_sufficiency(
         self, assignments: list[SlotAssignment]
     ) -> ValidationResult:
-        """Each product needs >= min_community_posts."""
-        threshold = self.category_config.min_community_posts
+        """Each product needs presence on at least 1 sales platform."""
         insufficient: list[str] = []
 
         for a in assignments:
-            total = 0
-            if a.candidate.sentiment:
-                total = a.candidate.sentiment.total_posts
-            if total < threshold:
-                insufficient.append(f"{a.candidate.name} ({total} posts)")
+            if a.candidate.presence_score < 1:
+                insufficient.append(
+                    f"{a.candidate.name} (presence={a.candidate.presence_score})"
+                )
 
         if not insufficient:
             return ValidationResult(
                 check_name="data_sufficiency",
                 passed=True,
-                detail=f"All products have >= {threshold} community posts",
+                detail="All products have sales platform presence",
             )
         else:
             return ValidationResult(
                 check_name="data_sufficiency",
                 passed=False,
-                detail=f"Below {threshold} posts: {'; '.join(insufficient)}",
+                detail=f"No platform data: {'; '.join(insufficient)}",
             )
 
     def _check_recency(

@@ -118,11 +118,10 @@ class RepairStats(BaseModel):
 
 
 class ResaleCurve(BaseModel):
-    """Price retention curve as percentage of original price."""
-    mo_6: float | None = Field(default=None, alias="6mo")
-    mo_12: float | None = Field(default=None, alias="12mo")
-    mo_18: float | None = Field(default=None, alias="18mo")
-    mo_24: float | None = Field(default=None, alias="24mo")
+    """Price retention curve as percentage of original price (yearly buckets)."""
+    yr_1: float | None = Field(default=None, alias="1yr")
+    yr_2: float | None = Field(default=None, alias="2yr")
+    yr_3_plus: float | None = Field(default=None, alias="3yr_plus")
 
     model_config = {"populate_by_name": True}
 
@@ -133,9 +132,11 @@ class TCOSummary(BaseModel):
     """Calculated TCO metrics for a product."""
     purchase_price_avg: int = Field(description="Average purchase price (KRW)")
     purchase_price_min: int = Field(description="Minimum observed price (KRW)")
-    resale_value_24mo: int = Field(description="Estimated resale value at 24 months (KRW)")
+    resale_value_1yr: int = Field(description="Median resale value within 1 year (KRW)")
+    resale_value_2yr: int = Field(description="Median resale value at 1-2 years (KRW)")
+    resale_value_3yr_plus: int = Field(description="Median resale value at 3+ years (KRW)")
     expected_repair_cost: int = Field(description="Probability-weighted repair cost (KRW)")
-    real_cost_3yr: int = Field(description="Q1 + Q3 - Q2 (KRW)")
+    real_cost_3yr: int = Field(description="Q1 + Q3 - Q2(2yr) (KRW)")
     as_turnaround_days: float = Field(description="Average AS turnaround (days)")
     monthly_maintenance_minutes: float = Field(description="Total monthly maintenance (minutes)")
 
