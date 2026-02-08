@@ -69,7 +69,12 @@ class DanawaScraper:
         soup = BeautifulSoup(resp.text, "lxml")
 
         products: list[dict] = []
-        product_items = soup.select(".product_list .prod_item")
+        # Current Danawa: li.goods-list__item with id="productItem-{code}"
+        # Legacy fallback: .product_list .prod_item
+        product_items = (
+            soup.select("li.goods-list__item[id^='productItem']")
+            or soup.select(".product_list .prod_item")
+        )
 
         for item in product_items[:max_results]:
             try:
@@ -85,7 +90,10 @@ class DanawaScraper:
 
     def _parse_search_item(self, item: BeautifulSoup) -> dict | None:
         """Parse a single search result item."""
-        product_code = item.get("id", "").replace("productItem", "").strip()
+        # Current: id="productItem-98919797" (with hyphen)
+        # Legacy:  id="productItem98919797" (no hyphen)
+        raw_id = item.get("id", "")
+        product_code = raw_id.replace("productItem-", "").replace("productItem", "").strip()
         if not product_code:
             product_code_match = re.search(r"pcode=(\d+)", str(item))
             if product_code_match:
@@ -94,13 +102,22 @@ class DanawaScraper:
         if not product_code:
             return None
 
-        name_el = item.select_one(".prod_name a, .prod_name p")
+        # Current: span.goods-list__title  |  Legacy: .prod_name a
+        name_el = (
+            item.select_one("span.goods-list__title")
+            or item.select_one(".prod_name a, .prod_name p")
+        )
         name = name_el.get_text(strip=True) if name_el else ""
 
         brand_el = item.select_one(".maker, .brand")
         brand = brand_el.get_text(strip=True) if brand_el else ""
 
-        price_el = item.select_one(".price_sect .price_wrap .price")
+        # Current: div.goods-list__price  |  Legacy: .price_sect .price_wrap .price
+        price_el = (
+            item.select_one("div.goods-list__price")
+            or item.select_one(".box__price-wrap .text__price em")
+            or item.select_one(".price_sect .price_wrap .price")
+        )
         price_text = price_el.get_text(strip=True) if price_el else "0"
         price = self._parse_price(price_text)
 
@@ -128,27 +145,40 @@ class DanawaScraper:
 
         records: list[PriceRecord] = []
 
-        # Parse product name
-        title_el = soup.select_one(".prod_tit, #blog_content .tit")
+        # Parse product name (BEM: .text__title or legacy: .prod_tit)
+        title_el = (
+            soup.select_one(".top-summary .text__title")
+            or soup.select_one(".prod_tit, #blog_content .tit")
+        )
         product_name = title_el.get_text(strip=True) if title_el else f"product_{product_code}"
 
-        # Parse price table from the product page
-        price_rows = soup.select(
-            ".prod_pricelist .price_list_tbl tbody tr, "
-            "#lowPriceList .lwst_row"
+        # Strategy 1: Mall price list rows
+        # Current: div.price_row_type1 with div.sell-price
+        # Legacy:  .list__mall-price .list-item, .prod_pricelist tr
+        price_rows = (
+            soup.select("div.price_row_type1")
+            or soup.select(".list__mall-price .list-item")
+            or soup.select(".prod_pricelist .price_list_tbl tbody tr")
         )
 
         for row in price_rows:
             try:
-                price_el = row.select_one(".price, .prc_c")
+                # Current: div.sell-price or span.mall_t3_price
+                price_el = (
+                    row.select_one("div.sell-price")
+                    or row.select_one("span.mall_t3_price")
+                    or row.select_one(".sell-price .text__num")
+                    or row.select_one(".price, .prc_c")
+                )
                 if not price_el:
                     continue
                 price = self._parse_price(price_el.get_text(strip=True))
                 if price <= 0:
                     continue
 
-                # Check if this is a sale/special price
-                is_sale = bool(row.select_one(".sale, .coupon, .event"))
+                is_sale = bool(
+                    row.select_one(".badge__lowest, .sale, .coupon, .event, .official_mall")
+                )
 
                 records.append(
                     PriceRecord(
@@ -164,10 +194,13 @@ class DanawaScraper:
                 logger.debug("Failed to parse price row", exc_info=True)
                 continue
 
-        # If no detailed rows found, try the main price display
+        # Strategy 2: Main lowest price display
         if not records:
-            main_price_el = soup.select_one(
-                "#lowPriceCash .lwst_prc, .lowest_price .prc"
+            main_price_el = (
+                soup.select_one("strong.num_low01")  # current
+                or soup.select_one("span.text__number")  # current alt
+                or soup.select_one(".price-summary .sell-price .text__num")
+                or soup.select_one("#lowPriceCash .lwst_prc, .lowest_price .prc")
             )
             if main_price_el:
                 price = self._parse_price(main_price_el.get_text(strip=True))
@@ -182,6 +215,23 @@ class DanawaScraper:
                             product_id=product_code,
                         )
                     )
+
+        # Strategy 3: Any element with price-like number in price containers
+        if not records:
+            for el in soup.select("div.price_unit, div.sell-price"):
+                price = self._parse_price(el.get_text(strip=True))
+                if price > 0:
+                    records.append(
+                        PriceRecord(
+                            product_name=product_name,
+                            price=price,
+                            source="danawa",
+                            date=date.today(),
+                            is_sale=False,
+                            product_id=product_code,
+                        )
+                    )
+                    break  # just need one fallback price
 
         logger.info(
             "Found %d price records for product %s", len(records), product_code
@@ -333,8 +383,14 @@ class DanawaScraper:
 
     @staticmethod
     def _parse_price(text: str) -> int:
-        """Extract numeric price from Korean price text (e.g., '1,234,000원')."""
-        digits = re.sub(r"[^\d]", "", text)
+        """Extract numeric price from Korean price text.
+
+        Handles formats like '1,234,000원', '614,740원(657몰)', '369,000원~'.
+        Truncates at '원' or '~' to avoid capturing trailing numbers like '(657몰)'.
+        """
+        # Cut at '원', '~', or '(' to isolate the price portion
+        price_part = re.split(r"[원~(]", text)[0]
+        digits = re.sub(r"[^\d]", "", price_part)
         return int(digits) if digits else 0
 
     @staticmethod

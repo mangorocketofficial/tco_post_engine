@@ -5,10 +5,13 @@ Loads category-specific settings from YAML files under config/.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -95,3 +98,39 @@ class CategoryConfig:
             min_community_posts=20,
             danawa_category_code="10204001",
         )
+
+    def save_yaml(self, path: str | Path | None = None) -> Path:
+        """Save current config to a YAML file for future reuse.
+
+        Args:
+            path: Output path. Defaults to ``config/category_{name}.yaml``.
+
+        Returns:
+            Path where the file was written.
+        """
+        if path is None:
+            path = _PROJECT_ROOT / "config" / f"category_{self.name}.yaml"
+        p = Path(path)
+        if not p.is_absolute():
+            p = _PROJECT_ROOT / p
+
+        data = {
+            "name": self.name,
+            "search_terms": self.search_terms,
+            "danawa_category_code": self.danawa_category_code,
+            "negative_keywords": self.negative_keywords,
+            "positive_keywords": self.positive_keywords,
+            "price_range": {
+                "min": self.price_range_min,
+                "max": self.price_range_max,
+            },
+            "max_product_age_months": self.max_product_age_months,
+            "min_community_posts": self.min_community_posts,
+        }
+
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+        logger.info("Saved category config to %s", p)
+        return p

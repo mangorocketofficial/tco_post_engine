@@ -27,6 +27,7 @@ from .sales_ranking_scraper import (
     DanawaRankingScraper,
     NaverShoppingRankingScraper,
 )
+from .danawa_category_resolver import DanawaCategoryResolver
 from .scorer import ProductScorer
 from .search_interest_scraper import NaverDataLabScraper
 from .sentiment_scraper import SentimentScraper
@@ -40,16 +41,14 @@ class ProductSelectionPipeline:
     """End-to-end product selection pipeline.
 
     Steps:
-    1. Collect sales rankings from 3 platforms
-    2. Aggregate into candidate pool (presence >= 2)
+    1. Collect sales rankings from platforms
+    2. Aggregate into candidate pool
     3. Collect search interest for candidates
-    4. Collect community sentiment for candidates
-    5. Classify price tiers
-    6. Quick resale check
-    7. Score all candidates
-    8. Assign to 3 slots
-    9. Validate and fix if needed
-    10. Build SelectionResult
+    4. Classify price tiers
+    5. Score all candidates
+    6. Assign to 3 slots
+    7. Validate and fix if needed
+    8. Build SelectionResult
 
     Usage:
         pipeline = ProductSelectionPipeline(category_config)
@@ -95,12 +94,10 @@ class ProductSelectionPipeline:
                 "Try broader search terms or lower min_presence."
             )
 
-        # Steps 3-6: Enrichment (each step is optional — failures don't stop the pipeline)
+        # Steps 3-4: Enrichment (each step is optional — failures don't stop the pipeline)
         for step_num, step_name, step_fn in [
             (3, "search interest", self._collect_search_interest),
-            (4, "community sentiment", self._collect_sentiment),
-            (5, "price tiers", self._classify_prices),
-            (6, "resale quick-check", self._check_resale),
+            (4, "price tiers", self._classify_prices),
         ]:
             logger.info("Step %d: Collecting %s...", step_num, step_name)
             try:
@@ -111,33 +108,31 @@ class ProductSelectionPipeline:
                     step_num, step_name, exc_info=True,
                 )
 
-        # Step 7: Score candidates
-        logger.info("Step 7: Scoring candidates...")
+        # Step 5: Score candidates
+        logger.info("Step 5: Scoring candidates...")
         scorer = ProductScorer()
         scores = scorer.score_candidates(candidates)
 
-        # Step 8: Assign to 3 slots
-        logger.info("Step 8: Assigning to slots...")
+        # Step 6: Assign to 3 slots
+        logger.info("Step 6: Assigning to slots...")
         selector = SlotSelector()
         assignments = selector.select(candidates, scores)
 
-        # Step 9: Validate and fix
-        logger.info("Step 9: Validating selection...")
+        # Step 7: Validate and fix
+        logger.info("Step 7: Validating selection...")
         validator = SelectionValidator(self.category_config)
         assignments, validations = validator.validate_and_fix(
             assignments, candidates, scores
         )
 
-        # Step 10: Build result
+        # Step 8: Build result
         result = SelectionResult(
             category=keyword,
             selection_date=date.today(),
             data_sources={
-                "sales_rankings": ["naver_shopping", "danawa", "coupang"],
+                "sales_rankings": ["naver_shopping", "danawa"],
                 "search_volume": "naver_datalab",
-                "community_sentiment": ["ppomppu", "clien", "naver_cafe"],
                 "price_data": "danawa",
-                "resale_check": "danggeun",
             },
             candidate_pool_size=len(candidates),
             selected_products=assignments,
@@ -163,6 +158,19 @@ class ProductSelectionPipeline:
 
         # Danawa
         danawa_code = self.category_config.danawa_category_code
+        if not danawa_code:
+            logger.info("No Danawa category code configured, attempting auto-resolve...")
+            try:
+                with DanawaCategoryResolver(self.config) as resolver:
+                    danawa_code = resolver.resolve(keyword)
+            except Exception:
+                logger.warning("Danawa category auto-resolve failed", exc_info=True)
+            if danawa_code:
+                self.category_config.danawa_category_code = danawa_code
+                logger.info("Auto-resolved Danawa category code: %s", danawa_code)
+            else:
+                logger.warning("Could not auto-resolve Danawa category code, skipping")
+
         if danawa_code:
             try:
                 with DanawaRankingScraper(self.config) as scraper:
@@ -172,15 +180,15 @@ class ProductSelectionPipeline:
                 danawa = []
         else:
             danawa = []
-            logger.warning("No Danawa category code configured, skipping")
 
-        # Coupang
-        try:
-            with CoupangRankingScraper(self.config) as scraper:
-                coupang = scraper.get_best_sellers(keyword)
-        except Exception:
-            logger.warning("Coupang scraper failed, continuing without it", exc_info=True)
-            coupang = []
+        # Coupang — disabled until official API is available
+        # try:
+        #     with CoupangRankingScraper(self.config) as scraper:
+        #         coupang = scraper.get_best_sellers(keyword)
+        # except Exception:
+        #     logger.warning("Coupang scraper failed, continuing without it", exc_info=True)
+        #     coupang = []
+        coupang = []
 
         total = len(naver) + len(danawa) + len(coupang)
         if total == 0:

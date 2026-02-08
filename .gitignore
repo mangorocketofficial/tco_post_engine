@@ -24,10 +24,16 @@ venv/
 .DS_Store
 Thumbs.db
 
-# Data cache
+# Data (runtime-generated)
 data/raw_html/
+data/exports/
+data/processed/
+data/raw/
 *.sqlite
 *.db
+
+# Screenshots
+*.png
 
 # Claude
 .claude/

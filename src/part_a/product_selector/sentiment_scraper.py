@@ -36,8 +36,8 @@ class SentimentScraper:
 
     SOURCES = {
         "ppomppu": {
-            "search_url": "https://www.ppomppu.co.kr/zboard/search_res.php",
-            "param_key": "search_text",
+            "search_url": "https://www.ppomppu.co.kr/search_bbs.php",
+            "param_key": "keyword",
         },
         "clien": {
             "search_url": "https://www.clien.net/service/search",

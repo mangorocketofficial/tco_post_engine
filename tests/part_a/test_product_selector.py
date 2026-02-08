@@ -864,6 +864,99 @@ danawa_category_code: "12345"
         assert "로봇청소기" in config.search_terms
         assert config.min_community_posts == 20
 
+    def test_save_yaml(self, tmp_path):
+        config = CategoryConfig(
+            name="test_save",
+            search_terms=["테스트"],
+            negative_keywords=["불만"],
+            positive_keywords=["추천"],
+            danawa_category_code="99999",
+        )
+        out = config.save_yaml(tmp_path / "out.yaml")
+        assert out.exists()
+
+        loaded = CategoryConfig.from_yaml(out)
+        assert loaded.name == "test_save"
+        assert loaded.danawa_category_code == "99999"
+        assert loaded.search_terms == ["테스트"]
+
+
+# ===================================================================
+# DanawaCategoryResolver Tests
+# ===================================================================
+
+
+class TestDanawaCategoryResolver:
+    def test_extract_category_code_from_links(self):
+        from src.part_a.product_selector.danawa_category_resolver import (
+            DanawaCategoryResolver,
+        )
+
+        html = """
+        <html><body>
+        <a href="https://prod.danawa.com/list/?cate=10248425&sort=saleCnt">TV</a>
+        <a href="https://prod.danawa.com/info/?pcode=123&cate=10248425">Product 1</a>
+        <a href="https://prod.danawa.com/info/?pcode=456&cate=10248425">Product 2</a>
+        <a href="https://prod.danawa.com/list/?cate=99999">Other</a>
+        </body></html>
+        """
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(html, "lxml")
+        resolver = DanawaCategoryResolver.__new__(DanawaCategoryResolver)
+        code = resolver._extract_category_code(soup)
+        assert code == "10248425"
+
+    def test_extract_no_links_returns_none(self):
+        from src.part_a.product_selector.danawa_category_resolver import (
+            DanawaCategoryResolver,
+        )
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup("<html><body><p>No links</p></body></html>", "lxml")
+        resolver = DanawaCategoryResolver.__new__(DanawaCategoryResolver)
+        assert resolver._extract_category_code(soup) is None
+
+    def test_parse_cate_from_url(self):
+        from src.part_a.product_selector.danawa_category_resolver import (
+            DanawaCategoryResolver,
+        )
+
+        codes = DanawaCategoryResolver._parse_cate_from_url(
+            "https://prod.danawa.com/list/?cate=10248425&sort=saleCnt"
+        )
+        assert "10248425" in codes
+
+    def test_parse_cate_ignores_short_codes(self):
+        from src.part_a.product_selector.danawa_category_resolver import (
+            DanawaCategoryResolver,
+        )
+
+        codes = DanawaCategoryResolver._parse_cate_from_url("?cate=12")
+        assert codes == []
+
+    def test_resolve_with_mock(self, monkeypatch):
+        from src.part_a.product_selector.danawa_category_resolver import (
+            DanawaCategoryResolver,
+        )
+
+        fake_html = """
+        <html><body>
+        <a href="https://prod.danawa.com/list/?cate=10248425">Cat</a>
+        <a href="https://prod.danawa.com/info/?pcode=1&cate=10248425">P1</a>
+        </body></html>
+        """
+        mock_resp = MagicMock()
+        mock_resp.text = fake_html
+
+        resolver = DanawaCategoryResolver.__new__(DanawaCategoryResolver)
+        resolver._client = MagicMock()
+        resolver._client.get.return_value = mock_resp
+
+        code = resolver.resolve("벽걸이TV")
+        assert code == "10248425"
+        resolver._client.get.assert_called_once()
+
 
 # ===================================================================
 # DB Tests
