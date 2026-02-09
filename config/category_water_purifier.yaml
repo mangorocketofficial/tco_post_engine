@@ -1,0 +1,33 @@
+name: "정수기"
+search_terms: ["정수기"]
+danawa_category_code: ""
+
+negative_keywords: ["불만", "후회", "실망", "반품", "고장", "AS", "수리", "오류", "세균", "냄새"]
+positive_keywords: ["추천", "만족", "최고", "잘샀다", "좋아요", "강추", "물맛", "편리"]
+
+price_range:
+  min: 0
+  max: 10000000
+
+max_product_age_months: 18
+min_community_posts: 20
+
+repair_keywords:
+  repair: ["수리", "AS", "고장", "서비스센터", "교체", "부품"]
+  failure_types:
+    - "필터 막힘"
+    - "멤브레인 손상"
+    - "물탱크 세균"
+    - "냉/온수 고장"
+    - "배수 시스템"
+    - "센서 오작동"
+    - "펌프 고장"
+
+maintenance_checklist:
+  - "필터 교체"
+  - "물탱크 청소"
+  - "배수호스 점검"
+  - "외부 청소"
+  - "자동 배수 점검"
+  - "고온/UV 기능 확인"
+  - "내부 배관 점검"
