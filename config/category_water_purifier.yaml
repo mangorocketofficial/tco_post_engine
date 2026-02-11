@@ -12,22 +12,14 @@ price_range:
 max_product_age_months: 18
 min_community_posts: 20
 
-repair_keywords:
-  repair: ["수리", "AS", "고장", "서비스센터", "교체", "부품"]
-  failure_types:
-    - "필터 막힘"
-    - "멤브레인 손상"
-    - "물탱크 세균"
-    - "냉/온수 고장"
-    - "배수 시스템"
-    - "센서 오작동"
-    - "펌프 고장"
-
-maintenance_checklist:
-  - "필터 교체"
-  - "물탱크 청소"
-  - "배수호스 점검"
-  - "외부 청소"
-  - "자동 배수 점검"
-  - "고온/UV 기능 확인"
-  - "내부 배관 점검"
+# A2 소모품 정보
+consumables:
+  tco_tier: "essential"
+  tco_label: "3년 카트리지 포함 총비용"
+  items:
+    - name: "세디멘트필터"
+      cycle: "3~6개월"
+    - name: "카본필터"
+      cycle: "6~12개월"
+    - name: "멤브레인필터"
+      cycle: "12~24개월"

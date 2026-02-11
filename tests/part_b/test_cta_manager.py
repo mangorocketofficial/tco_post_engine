@@ -3,7 +3,7 @@
 Tests cover:
 - Affiliate link registration and storage
 - UTM parameter generation
-- CTA placement rules (1 CTA per product per section 3/4/5)
+- CTA placement rules (1 CTA per product per section 2/3/4)
 - URL building with tracking
 - Link persistence (JSON save/load)
 - Placement plan creation and querying
@@ -102,9 +102,9 @@ class TestModels:
         assert CTA_DEFAULT_TEXT == "최저가 확인하기"
 
     def test_cta_section_values(self):
-        assert CTASection.QUICK_PICK.value == "section_3"
-        assert CTASection.DEEP_DIVE.value == "section_4"
-        assert CTASection.ACTION.value == "section_5"
+        assert CTASection.QUICK_PICK.value == "section_2"
+        assert CTASection.DEEP_DIVE.value == "section_3"
+        assert CTASection.CHECKLIST.value == "section_4"
 
     def test_placement_plan_query_by_section(self):
         plan = CTAPlacementPlan(
@@ -204,7 +204,7 @@ class TestURLBuilding:
         assert "utm_source=tco_blog" in url
         assert "utm_medium=affiliate" in url
         assert "utm_campaign=robot_vacuum_2026" in url
-        assert "section_3_cta" in url
+        assert "section_2_cta" in url
 
     def test_build_tracked_url_includes_affiliate_tag(self, manager):
         url = manager.build_tracked_url(
@@ -214,14 +214,14 @@ class TestURLBuilding:
         assert "tag=mangorocket" in url
 
     def test_build_tracked_url_different_sections(self, manager):
-        url_s3 = manager.build_tracked_url("roborock-q-revo-s", CTASection.QUICK_PICK)
-        url_s4 = manager.build_tracked_url("roborock-q-revo-s", CTASection.DEEP_DIVE)
-        url_s5 = manager.build_tracked_url("roborock-q-revo-s", CTASection.ACTION)
+        url_s2 = manager.build_tracked_url("roborock-q-revo-s", CTASection.QUICK_PICK)
+        url_s3 = manager.build_tracked_url("roborock-q-revo-s", CTASection.DEEP_DIVE)
+        url_s4 = manager.build_tracked_url("roborock-q-revo-s", CTASection.CHECKLIST)
 
+        assert "section_2_cta" in url_s2
         assert "section_3_cta" in url_s3
         assert "section_4_cta" in url_s4
-        assert "section_5_cta" in url_s5
-        assert url_s3 != url_s4 != url_s5
+        assert url_s2 != url_s3 != url_s4
 
     def test_build_tracked_url_unknown_product(self, manager):
         with pytest.raises(KeyError, match="No affiliate link"):
@@ -244,7 +244,7 @@ class TestPlacementPlan:
         plan = manager.create_placement_plan(product_ids, campaign="test")
 
         for product_id in product_ids:
-            for section in [CTASection.QUICK_PICK, CTASection.DEEP_DIVE, CTASection.ACTION]:
+            for section in [CTASection.QUICK_PICK, CTASection.DEEP_DIVE, CTASection.CHECKLIST]:
                 matching = [
                     e for e in plan.entries
                     if e.product_id == product_id and e.section == section
@@ -307,12 +307,12 @@ class TestApplyCTALinks:
         assert "utm_source" in result[0]["cta_link"]
         assert result[1]["cta_link"] != ""
 
-    def test_apply_uses_section3_url(self, manager, product_ids):
+    def test_apply_uses_section2_url(self, manager, product_ids):
         plan = manager.create_placement_plan(product_ids, campaign="test")
         products = [{"product_id": "roborock-q-revo-s"}]
 
         result = manager.apply_cta_links(products, plan)
-        assert "section_3_cta" in result[0]["cta_link"]
+        assert "section_2_cta" in result[0]["cta_link"]
 
     def test_apply_skips_unmatched_products(self, manager, product_ids):
         plan = manager.create_placement_plan(product_ids, campaign="test")

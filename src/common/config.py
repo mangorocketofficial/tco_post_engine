@@ -55,7 +55,7 @@ class Settings(BaseModel):
     scraper: ScraperSettings = Field(default_factory=ScraperSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
-    default_category: str = "로봇청소기"
+    default_category: str = ""
 
     @classmethod
     def load(cls) -> Settings:

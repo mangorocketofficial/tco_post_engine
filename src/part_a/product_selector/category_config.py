@@ -29,6 +29,16 @@ class CategoryConfig:
     max_product_age_months: int = 18
     min_community_posts: int = 20
     danawa_category_code: str = ""
+    repair_keywords: dict[str, list[str]] = field(default_factory=lambda: {
+        "repair": ["수리", "AS", "고장", "서비스센터", "교체", "부품"],
+        "failure_types": [],
+    })
+    maintenance_checklist: list[str] = field(default_factory=list)
+    # Multi-category support
+    tco_years: int = 3                    # tech=3, pet=2
+    domain: str = "tech"                  # "tech" | "pet"
+    subscription_model: bool = False      # GPS tracker, auto litter box, etc.
+    multi_unit_label: str | None = None   # pet: "마리", tech: None
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> CategoryConfig:
@@ -47,6 +57,10 @@ class CategoryConfig:
             data = yaml.safe_load(f) or {}
 
         price_range = data.get("price_range", {})
+        default_repair = {
+            "repair": ["수리", "AS", "고장", "서비스센터", "교체", "부품"],
+            "failure_types": [],
+        }
         return cls(
             name=data.get("name", ""),
             search_terms=data.get("search_terms", []),
@@ -57,6 +71,12 @@ class CategoryConfig:
             max_product_age_months=data.get("max_product_age_months", 18),
             min_community_posts=data.get("min_community_posts", 20),
             danawa_category_code=data.get("danawa_category_code", ""),
+            repair_keywords=data.get("repair_keywords", default_repair),
+            maintenance_checklist=data.get("maintenance_checklist", []),
+            tco_years=data.get("tco_years", 3),
+            domain=data.get("domain", "tech"),
+            subscription_model=data.get("subscription_model", False),
+            multi_unit_label=data.get("multi_unit_label"),
         )
 
     @classmethod
@@ -126,6 +146,12 @@ class CategoryConfig:
             },
             "max_product_age_months": self.max_product_age_months,
             "min_community_posts": self.min_community_posts,
+            "repair_keywords": self.repair_keywords,
+            "maintenance_checklist": self.maintenance_checklist,
+            "tco_years": self.tco_years,
+            "domain": self.domain,
+            "subscription_model": self.subscription_model,
+            "multi_unit_label": self.multi_unit_label,
         }
 
         p.parent.mkdir(parents=True, exist_ok=True)

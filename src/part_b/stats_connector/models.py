@@ -18,20 +18,20 @@ class MetricPeriod(str, Enum):
 @dataclass
 class CTAClickMetrics:
     """CTA click tracking per section."""
-    section_3_clicks: int = 0  # Quick Pick
-    section_4_clicks: int = 0  # Deep Dive
-    section_5_clicks: int = 0  # Action Trigger
+    section_2_clicks: int = 0  # 추천 요약표
+    section_3_clicks: int = 0  # TCO 심층 분석
+    section_4_clicks: int = 0  # 구매 전 체크리스트
     total_clicks: int = 0
 
     @property
     def click_distribution(self) -> dict[str, float]:
         """Click distribution across sections as percentages."""
         if self.total_clicks == 0:
-            return {"section_3": 0, "section_4": 0, "section_5": 0}
+            return {"section_2": 0, "section_3": 0, "section_4": 0}
         return {
+            "section_2": self.section_2_clicks / self.total_clicks,
             "section_3": self.section_3_clicks / self.total_clicks,
             "section_4": self.section_4_clicks / self.total_clicks,
-            "section_5": self.section_5_clicks / self.total_clicks,
         }
 
 
@@ -80,9 +80,9 @@ class PostMetrics:
             "avg_time_on_page": self.avg_time_on_page,
             "scroll_depth_avg": self.scroll_depth_avg,
             "cta_clicks": {
+                "section_2_clicks": self.cta_clicks.section_2_clicks,
                 "section_3_clicks": self.cta_clicks.section_3_clicks,
                 "section_4_clicks": self.cta_clicks.section_4_clicks,
-                "section_5_clicks": self.cta_clicks.section_5_clicks,
                 "total_clicks": self.cta_clicks.total_clicks,
             },
             "conversion_rate": self.conversion_rate,
@@ -110,9 +110,9 @@ class PostMetrics:
             avg_time_on_page=data.get("avg_time_on_page", 0.0),
             scroll_depth_avg=data.get("scroll_depth_avg", 0.0),
             cta_clicks=CTAClickMetrics(
+                section_2_clicks=cta_data.get("section_2_clicks", 0),
                 section_3_clicks=cta_data.get("section_3_clicks", 0),
                 section_4_clicks=cta_data.get("section_4_clicks", 0),
-                section_5_clicks=cta_data.get("section_5_clicks", 0),
                 total_clicks=cta_data.get("total_clicks", 0),
             ),
             conversion_rate=data.get("conversion_rate", 0.0),
@@ -126,12 +126,12 @@ class PostMetrics:
 
 @dataclass
 class SectionPerformance:
-    """Per-section success metrics (from dev_agent.md B4-2)."""
+    """Per-section success metrics."""
     section_0_bounce_rate: float = 0.0  # Target: < 40%
-    section_2_scroll_depth: float = 0.0  # Target: > 60%
-    section_3_cta_click_rate: float = 0.0  # Higher = better
-    section_4_time_on_section: float = 0.0  # Target: > 30s
-    section_6_exit_rate: float = 0.0  # Lower = better
+    section_1_scroll_depth: float = 0.0  # Target: > 60%
+    section_2_cta_click_rate: float = 0.0  # Higher = better
+    section_3_time_on_section: float = 0.0  # Target: > 30s
+    section_5_exit_rate: float = 0.0  # Lower = better
 
 
 @dataclass

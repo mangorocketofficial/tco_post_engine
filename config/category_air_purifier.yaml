@@ -1,0 +1,24 @@
+# Category config for A-0 Product Selector: Air Purifier
+name: "공기청정기"
+search_terms: ["공기청정기"]
+danawa_category_code: ""
+
+negative_keywords: ["불만", "후회", "실망", "반품", "고장", "AS", "수리", "오류", "소음", "냄새"]
+positive_keywords: ["추천", "만족", "최고", "잘샀다", "좋아요", "강추", "조용함", "깨끗"]
+
+price_range:
+  min: 100000
+  max: 1000000
+
+max_product_age_months: 18
+min_community_posts: 20
+
+# A2 소모품 정보
+consumables:
+  tco_tier: "essential"
+  tco_label: "3년 필터 포함 총비용"
+  items:
+    - name: "HEPA필터"
+      cycle: "6~12개월"
+    - name: "탈취필터"
+      cycle: "6~12개월"

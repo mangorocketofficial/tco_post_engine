@@ -21,34 +21,6 @@ class PriceSource(str, Enum):
     NAVER = "naver"
 
 
-class ResalePlatform(str, Enum):
-    """Platforms for resale transaction data."""
-    DANGGEUN = "danggeun"
-    BUNJANG = "bunjang"
-
-
-class ProductCondition(str, Enum):
-    """Condition of resale product."""
-    LIKE_NEW = "like_new"
-    GOOD = "good"
-    FAIR = "fair"
-    POOR = "poor"
-
-
-class CommunitySource(str, Enum):
-    """Community sources for repair/AS data."""
-    PPOMPPU = "ppomppu"
-    CLIEN = "clien"
-    NAVER_CAFE = "naver_cafe"
-
-
-class Sentiment(str, Enum):
-    """Sentiment classification for community posts."""
-    POSITIVE = "positive"
-    NEGATIVE = "negative"
-    NEUTRAL = "neutral"
-
-
 # === Part A: Data Models ===
 
 class Product(BaseModel):
@@ -69,76 +41,27 @@ class PriceRecord(BaseModel):
     is_sale: bool = False
 
 
-class ResaleTransaction(BaseModel):
-    """Completed resale transaction."""
-    product_id: str
-    platform: ResalePlatform
-    sale_price: int = Field(ge=0, description="Sale price in KRW")
-    listing_date: date
-    months_since_release: int = Field(ge=0)
-    condition: ProductCondition = ProductCondition.GOOD
-
-
-class RepairReport(BaseModel):
-    """Extracted repair/AS data from community post."""
-    product_id: str
-    failure_type: str
-    repair_cost: int = Field(ge=0, description="Repair cost in KRW")
-    as_days: int = Field(ge=0, description="AS turnaround in days")
-    sentiment: Sentiment = Sentiment.NEUTRAL
-    source: CommunitySource
-    source_url: str = ""
-    date: date
-
-
-class MaintenanceTask(BaseModel):
-    """Regular maintenance task for a product."""
-    product_id: str
-    task: str
-    frequency_per_month: float = Field(gt=0)
-    minutes_per_task: float = Field(ge=0)
-
-    @property
-    def total_monthly_minutes(self) -> float:
-        return self.frequency_per_month * self.minutes_per_task
-
-
-class FailureTypeStat(BaseModel):
-    """Aggregated statistics for a failure type."""
-    type: str
-    count: int
-    avg_cost: int
-    probability: float = Field(ge=0, le=1)
-
-
-class RepairStats(BaseModel):
-    """Aggregated repair statistics for a product."""
-    total_reports: int
-    failure_types: list[FailureTypeStat] = []
-
-
-class ResaleCurve(BaseModel):
-    """Price retention curve as percentage of original price (yearly buckets)."""
-    yr_1: float | None = Field(default=None, alias="1yr")
-    yr_2: float | None = Field(default=None, alias="2yr")
-    yr_3_plus: float | None = Field(default=None, alias="3yr_plus")
-
-    model_config = {"populate_by_name": True}
+class ConsumableItem(BaseModel):
+    """A single consumable cost item for a product."""
+    name: str
+    unit_price: int = Field(ge=0, description="Unit price in KRW")
+    replacement_cycle_months: int = Field(gt=0)
+    changes_per_year: float = Field(gt=0)
+    annual_cost: int = Field(ge=0, description="Annual cost in KRW")
+    compatible_available: bool = False
+    compatible_price: int | None = None
 
 
 # === TCO Calculation ===
 
 class TCOSummary(BaseModel):
     """Calculated TCO metrics for a product."""
-    purchase_price_avg: int = Field(description="Average purchase price (KRW)")
-    purchase_price_min: int = Field(description="Minimum observed price (KRW)")
-    resale_value_1yr: int = Field(description="Median resale value within 1 year (KRW)")
-    resale_value_2yr: int = Field(description="Median resale value at 1-2 years (KRW)")
-    resale_value_3yr_plus: int = Field(description="Median resale value at 3+ years (KRW)")
-    expected_repair_cost: int = Field(description="Probability-weighted repair cost (KRW)")
-    real_cost_3yr: int = Field(description="Q1 + Q3 - Q2(2yr) (KRW)")
-    as_turnaround_days: float = Field(description="Average AS turnaround (days)")
-    monthly_maintenance_minutes: float = Field(description="Total monthly maintenance (minutes)")
+    purchase_price: int = Field(description="Purchase price from A0 Naver Shopping lprice (KRW)")
+    annual_consumable_cost: int = Field(description="Annual consumable cost (KRW)")
+    tco_years: int = Field(default=3, description="TCO calculation period in years")
+    consumable_cost_total: int = Field(default=0, description="Consumable cost over tco_years (KRW)")
+    real_cost_total: int = Field(default=0, description="purchase + consumable_cost_total (KRW)")
+    consumable_breakdown: list[ConsumableItem] = []
 
 
 # === API Contract: Part A → Part B Export ===
@@ -150,14 +73,11 @@ class ProductTCOExport(BaseModel):
     brand: str
     release_date: date
     tco: TCOSummary
-    price_history: list[PriceRecord] = []
-    resale_curve: ResaleCurve | None = None
-    repair_stats: RepairStats | None = None
-    maintenance_tasks: list[MaintenanceTask] = []
 
 
 class TCOCategoryExport(BaseModel):
     """Full TCO export for a product category — the main data contract."""
     category: str
+    tco_years: int = 3
     generated_at: datetime
     products: list[ProductTCOExport]

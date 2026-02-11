@@ -1,0 +1,17 @@
+name: "에어프라이어"
+search_terms: ["에어프라이어", "에어 프라이어"]
+danawa_category_code: ""
+
+negative_keywords: ["불만", "후회", "실망", "반품", "고장", "AS", "수리", "오류", "불량", "문제"]
+positive_keywords: ["추천", "만족", "최고", "잘샀다", "좋아요", "강추", "우수", "훌륭"]
+
+price_range:
+  min: 0
+  max: 50000000
+
+max_product_age_months: 18
+min_community_posts: 20
+
+# A2 소모품 정보
+consumables:
+  tco_tier: "none"

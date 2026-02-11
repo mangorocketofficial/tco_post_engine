@@ -12,3 +12,19 @@ price_range:
 
 max_product_age_months: 18
 min_community_posts: 20
+
+# A2 소모품 정보
+consumables:
+  tco_tier: "essential"
+  tco_label: "3년 소모품 포함 총비용"
+  items:
+    - name: "필터"
+      cycle: "3~6개월"
+    - name: "사이드브러시"
+      cycle: "3~6개월"
+    - name: "메인브러시"
+      cycle: "6~12개월"
+    - name: "먼지봉투"
+      cycle: "1~2개월"
+    - name: "물걸레패드"
+      cycle: "1~3개월"

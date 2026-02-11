@@ -8,7 +8,7 @@ from datetime import date
 import pytest
 
 from src.part_a.database.connection import init_db, get_connection
-from src.part_a.database.models import Product, Price, ResaleTransaction
+from src.part_a.database.models import Product, Price
 
 
 class TestDatabaseInit:
@@ -23,9 +23,7 @@ class TestDatabaseInit:
             tables = [row["name"] for row in cursor.fetchall()]
             assert "products" in tables
             assert "prices" in tables
-            assert "resale_transactions" in tables
-            assert "repair_reports" in tables
-            assert "maintenance_tasks" in tables
+            assert "product_selections" in tables
         finally:
             conn.close()
 
@@ -71,6 +69,20 @@ class TestProductCRUD:
                 ("테스트 제품", "브랜드A", "카테고리"),
             )
 
+    def test_same_product_different_category(self, db_conn):
+        """Products with same name+brand but different category should not collide."""
+        db_conn.execute(
+            "INSERT INTO products (name, brand, category) VALUES (?, ?, ?)",
+            ("테스트제품", "테스트브랜드", "로봇청소기"),
+        )
+        db_conn.execute(
+            "INSERT INTO products (name, brand, category) VALUES (?, ?, ?)",
+            ("테스트제품", "테스트브랜드", "펫 급수기"),
+        )
+        db_conn.commit()
+        rows = db_conn.execute("SELECT * FROM products WHERE name='테스트제품'").fetchall()
+        assert len(rows) == 2
+
 
 class TestPriceCRUD:
     """Test price table operations."""
@@ -114,32 +126,6 @@ class TestPriceCRUD:
             )
 
 
-class TestResaleTransactionCRUD:
-    """Test resale_transactions table operations."""
-
-    def test_insert_resale(self, db_conn):
-        db_conn.execute(
-            "INSERT INTO products (name, brand, category) VALUES (?, ?, ?)",
-            ("제품B", "브랜드B", "카테고리B"),
-        )
-        product_id = db_conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-
-        db_conn.execute(
-            """INSERT INTO resale_transactions
-               (product_id, platform, sale_price, months_since_release, condition, listing_date)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (product_id, "danggeun", 850000, 6.5, "used", "2026-01-15"),
-        )
-        db_conn.commit()
-
-        row = db_conn.execute(
-            "SELECT * FROM resale_transactions WHERE product_id = ?", (product_id,)
-        ).fetchone()
-        assert row["platform"] == "danggeun"
-        assert row["sale_price"] == 850000
-        assert row["condition"] == "used"
-
-
 class TestModels:
     """Test data model serialization."""
 
@@ -155,12 +141,4 @@ class TestModels:
         assert d["date"] == "2026-02-07"
         assert d["price"] == 1000000
 
-    def test_resale_transaction_to_dict(self):
-        r = ResaleTransaction(
-            product_id=1, platform="danggeun", sale_price=500000,
-            months_since_release=12.0, condition="used",
-            listing_date=date(2026, 1, 1),
-        )
-        d = r.to_dict()
-        assert d["platform"] == "danggeun"
-        assert d["listing_date"] == "2026-01-01"
+

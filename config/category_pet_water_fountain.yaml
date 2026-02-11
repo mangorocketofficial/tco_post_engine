@@ -1,0 +1,27 @@
+# Category config for A-0 Product Selector: Pet Water Fountain
+name: "pet_water_fountain"
+search_terms: ["펫 급수기", "고양이 급수기", "강아지 급수기", "반려동물 급수기"]
+danawa_category_code: ""
+
+tco_years: 2
+domain: "pet"
+subscription_model: false
+multi_unit_label: "마리"
+
+negative_keywords: ["소음", "세척불편", "곰팡이", "필터비싸", "누수", "고장", "물때"]
+positive_keywords: ["조용", "세척쉬움", "물많이마심", "추천", "깨끗", "위생적"]
+
+price_range:
+  min: 10000
+  max: 200000
+
+max_product_age_months: 24
+min_community_posts: 15
+
+# A2 소모품 정보
+consumables:
+  tco_tier: "essential"
+  tco_label: "2년 필터 포함 총비용"
+  items:
+    - name: "활성탄 필터"
+      cycle: "2~4주"

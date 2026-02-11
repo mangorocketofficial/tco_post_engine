@@ -25,11 +25,15 @@ from .category_config import CategoryConfig
 from .models import (
     CandidateProduct,
     KeywordMetrics,
+    ProductScores,
+    RecommendationResult,
+    SelectedProduct,
     SelectionResult,
     ValidationResult,
     extract_manufacturer,
 )
 from .naver_ad_client import NaverAdClient
+from .price_classifier import PriceClassifier
 from .sales_ranking_scraper import NaverShoppingRankingScraper
 from .scorer import ProductScorer
 from .slot_selector import TopSelector
@@ -55,12 +59,18 @@ class ProductSelectionPipeline:
         self,
         category_config: CategoryConfig,
         config: Config | None = None,
+        recommendation_result: RecommendationResult | None = None,
     ) -> None:
         self.category_config = category_config
         self.config = config or Config()
+        self.recommendation_result = recommendation_result
 
-    def run(self) -> SelectionResult:
+    def run(self, force_tier: str = "") -> SelectionResult:
         """Execute the pipeline.
+
+        Args:
+            force_tier: Override tier selection ("premium"|"mid"|"budget").
+                        Empty string = auto-select winning tier (default).
 
         Returns:
             SelectionResult with selected products and validation.
@@ -87,17 +97,76 @@ class ProductSelectionPipeline:
         logger.info("Step 2: Fetching keyword metrics from Naver Search Ad...")
         self._fetch_keyword_metrics(candidates)
 
-        # Step 3: Score and select TOP 3
-        logger.info("Step 3: Scoring and selecting TOP 3...")
+        # Step 2.5: Score candidates
+        logger.info("Step 2.5: Scoring candidates...")
         scorer = ProductScorer()
         scores = scorer.score_candidates(candidates)
 
-        selector = TopSelector()
-        picks = selector.select(candidates, scores)
+        # Step 2.7: Apply blog recommendation score bonus
+        if self.recommendation_result and self.recommendation_result.top_products:
+            logger.info("Step 2.7: Applying blog recommendation bonus...")
+            from .final_selector import match_product
 
-        # Step 4: Validate
-        logger.info("Step 4: Validating...")
-        validations = self._validate(picks)
+            for candidate in candidates:
+                for mention in self.recommendation_result.top_products:
+                    # Create minimal SelectedProduct wrapper for match_product
+                    temp_selected = SelectedProduct(
+                        rank=0,
+                        candidate=candidate,
+                        scores=ProductScores(product_name=candidate.name),
+                    )
+                    is_match, _ = match_product(temp_selected, mention)
+                    if is_match:
+                        old_score = scores[candidate.name].total_score
+                        # Bonus: +0.05 per mention, capped at +0.25
+                        bonus = min(0.05 * mention.mention_count, 0.25)
+                        # Apply bonus by scaling score components proportionally
+                        scale = (old_score + bonus) / max(old_score, 0.01)
+
+                        s = scores[candidate.name]
+                        scores[candidate.name] = ProductScores(
+                            product_name=s.product_name,
+                            clicks_score=s.clicks_score * scale,
+                            cpc_score=s.cpc_score * scale,
+                            search_volume_score=s.search_volume_score * scale,
+                            competition_score=s.competition_score * scale,
+                        )
+                        logger.info(
+                            "Blog bonus applied: %s (+%.3f → %.3f)",
+                            candidate.name,
+                            old_score,
+                            scores[candidate.name].total_score,
+                        )
+                        break
+
+        # Step 3: Classify candidates into price tiers
+        logger.info("Step 3: Classifying products into price tiers...")
+        classifier = PriceClassifier()
+        price_positions = classifier.classify_candidates(candidates)
+        tier_map = {pos.product_name: pos.price_tier for pos in price_positions}
+        logger.info(
+            "Tier distribution: %s",
+            {
+                tier: sum(1 for t in tier_map.values() if t == tier)
+                for tier in ["premium", "mid", "budget"]
+            },
+        )
+
+        # Step 4: Select TOP 3 from winning tier
+        logger.info("Step 4: Selecting TOP 3 from winning tier...")
+        selector = TopSelector()
+        picks, winning_tier, tier_scores, tier_counts = selector.select(
+            candidates, scores, tier_map, force_tier=force_tier
+        )
+        logger.info(
+            "Winning tier: %s (score %.3f)",
+            winning_tier,
+            tier_scores.get(winning_tier, 0.0),
+        )
+
+        # Step 5: Validate
+        logger.info("Step 5: Validating...")
+        validations = self._validate(picks, tier_map, winning_tier, tier_counts)
 
         result = SelectionResult(
             category=keyword,
@@ -109,6 +178,9 @@ class ProductSelectionPipeline:
             candidate_pool_size=len(candidates),
             selected_products=picks,
             validation=validations,
+            selected_tier=winning_tier,
+            tier_scores=tier_scores,
+            tier_product_counts=tier_counts,
         )
 
         logger.info("=== Pipeline complete ===")
@@ -193,29 +265,45 @@ class ProductSelectionPipeline:
                     )
 
     @staticmethod
-    def _validate(picks: list) -> list[ValidationResult]:
+    def _validate(
+        picks: list,
+        tier_map: dict[str, str],
+        winning_tier: str = "",
+        tier_counts: dict[str, int] | None = None,
+    ) -> list[ValidationResult]:
         """Basic validation on selected products."""
         validations: list[ValidationResult] = []
 
-        # Brand diversity check — use manufacturer, not product line
-        manufacturers = [p.candidate.manufacturer for p in picks]
-        unique_mfrs = set(manufacturers)
+        # Brand variety — informational only (no hard constraint)
+        brands = [p.candidate.manufacturer for p in picks]
+        n_unique = len(set(brands))
         validations.append(ValidationResult(
-            check_name="brand_diversity",
-            passed=len(unique_mfrs) == len(manufacturers),
-            detail=f"{len(unique_mfrs)} unique manufacturers: {', '.join(unique_mfrs)}",
+            check_name="brand_variety",
+            passed=True,  # always passes — informational only
+            detail=f"Selected brands: {', '.join(brands)} ({n_unique} unique)",
         ))
 
-        # Keyword data check
-        has_metrics = sum(
-            1 for p in picks if p.candidate.keyword_metrics
-            and p.candidate.keyword_metrics.monthly_clicks > 0
+        # Score floor check — all selected products should have score >= 0.1
+        all_above_floor = all(
+            p.scores.total_score >= 0.1 for p in picks
         )
         validations.append(ValidationResult(
             check_name="keyword_data",
-            passed=has_metrics >= 1,
-            detail=f"{has_metrics}/{len(picks)} products have keyword metrics",
+            passed=all_above_floor,
+            detail=(
+                f"{'All' if all_above_floor else 'Not all'} "
+                f"{len(picks)} products have total_score >= 0.1"
+            ),
         ))
+
+        # Tier depth check — winning tier should have at least 3 candidates
+        if winning_tier and tier_counts:
+            n = tier_counts.get(winning_tier, 0)
+            validations.append(ValidationResult(
+                check_name="tier_depth",
+                passed=n >= 3,
+                detail=f"Winning tier '{winning_tier}' has {n} candidates (minimum 3)",
+            ))
 
         return validations
 

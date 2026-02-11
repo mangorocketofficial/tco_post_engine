@@ -1,12 +1,12 @@
 {
   "$schema": "Part A → Part B API Contract",
-  "version": "1.1",
-  "description": "TCO data export format from Part A consumed by Part B. Includes intermediate A2/A3 schemas for hybrid pipeline.",
-  "endpoint": "JSON file export (MVP) → REST API (Phase 2)",
+  "version": "3.0",
+  "description": "TCO data export format from Part A consumed by Part B. Consumable-based TCO pipeline.",
+  "endpoint": "JSON file export (data/exports/tco_{category}.json)",
 
   "intermediate_schemas": {
-    "a2_resale": {
-      "description": "Claude WebSearch로 수집한 중고 시세 데이터 (data/processed/a2_resale_{category}.json)",
+    "a2_consumable": {
+      "description": "Claude WebSearch로 수집한 소모품 가격 데이터 (data/processed/a2_consumable_{category}.json)",
       "schema": {
         "category": "string",
         "searched_at": "ISO 8601 datetime",
@@ -14,56 +14,41 @@
         "products": [
           {
             "product_name": "string (제품 전체명)",
-            "purchase_price_avg": "number (KRW, A1에서 가져온 신품가)",
-            "resale_prices": {
-              "1yr": {
-                "price": "number (KRW, 1년 미만 사용 중고 중앙값)",
-                "sample_count": "number (참고한 매물 수)",
-                "sources": ["string (당근마켓|번개장터|중고나라|기타)"]
-              },
-              "2yr": {
-                "price": "number (KRW)",
-                "sample_count": "number",
-                "sources": ["string"]
-              },
-              "3yr_plus": {
-                "price": "number (KRW)",
-                "sample_count": "number",
-                "sources": ["string"]
+            "annual_consumable_cost": "number (KRW, 연간 소모품 총비용)",
+            "consumables": [
+              {
+                "name": "string (소모품명: 필터, 사이드브러시, 먼지봉투 등)",
+                "unit_price": "number (KRW, 개당 가격)",
+                "replacement_cycle_months": "number (교체 주기, 월)",
+                "changes_per_year": "number (연간 교체 횟수)",
+                "annual_cost": "number (KRW, unit_price × changes_per_year)",
+                "compatible_available": "boolean (호환품 유무)",
+                "compatible_price": "number | null (KRW, 호환품 가격)"
               }
-            },
-            "retention_curve": {
-              "1yr": "number (0-1, resale_1yr / purchase_price_avg)",
-              "2yr": "number (0-1)",
-              "3yr_plus": "number (0-1)"
-            },
+            ],
             "notes": "string (검색 특이사항)"
           }
         ]
       }
     },
-    "a3_repair": {
-      "description": "Claude WebSearch로 수집한 수리비/AS 데이터 (data/processed/a3_repair_{category}.json)",
+    "a5_reviews": {
+      "description": "Claude WebSearch로 수집한 리뷰 인사이트 (data/processed/a5_reviews_{category}.json)",
       "schema": {
-        "category": "string",
-        "searched_at": "ISO 8601 datetime",
-        "source": "claude_web_search",
+        "total_reviews_analyzed": "number",
+        "review_sources": ["string"],
         "products": [
           {
-            "product_name": "string (제품 전체명)",
-            "warranty_months": "number (무상 보증 기간, 월)",
-            "failure_types": [
-              {
-                "type": "string (고장 유형: sensor|motor|battery|suction|brush|etc)",
-                "avg_cost": "number (KRW, 평균 수리 비용)",
-                "probability": "number (0-1, 발생 확률 추정)",
-                "description": "string (고장 상세 설명)",
-                "sources": ["string (URL 또는 출처명)"]
-              }
-            ],
-            "expected_repair_cost": "number (KRW, sum of avg_cost × probability)",
-            "avg_as_days": "number (AS 평균 소요일)",
-            "notes": "string (검색 특이사항)"
+            "product_name": "string",
+            "reviews_collected": "number",
+            "purchase_motivations": ["string"],
+            "sentiment_keywords": {
+              "positive": ["string"],
+              "negative": ["string"]
+            },
+            "hidden_differentiator": "string",
+            "environment_splits": ["string"],
+            "as_reputation": "string (positive|neutral|negative)",
+            "as_reputation_summary": "string (AS 평판 요약, 정성적)"
           }
         ]
       }
@@ -73,56 +58,55 @@
   "schema": {
     "category": "string (e.g., '로봇청소기')",
     "generated_at": "ISO 8601 datetime",
+    "selected_tier": "string (선택된 가격 티어)",
+    "credibility": {
+      "product_count": "number",
+      "candidate_pool_size": "number",
+      "total_reviews_analyzed": "number",
+      "review_sources": ["string"],
+      "data_pipeline": "string"
+    },
     "products": [
       {
         "product_id": "string",
         "name": "string",
         "brand": "string",
         "release_date": "YYYY-MM-DD",
+        "source_a0_rank": "number",
+        "a0_total_score": "number",
         "tco": {
-          "purchase_price_avg": "number (KRW)",
-          "purchase_price_min": "number (KRW)",
-          "resale_value_1yr": "number (KRW)",
-          "resale_value_2yr": "number (KRW)",
-          "resale_value_3yr_plus": "number (KRW)",
-          "expected_repair_cost": "number (KRW)",
-          "real_cost_3yr": "number (KRW, = purchase + repair - resale_value_2yr)",
-          "as_turnaround_days": "number (avg days)",
-          "monthly_maintenance_minutes": "number (min/month)"
-        },
-        "price_history": [
-          {
-            "date": "YYYY-MM-DD",
-            "price": "number",
-            "source": "string (danawa|coupang|naver)",
-            "is_sale": "boolean"
-          }
-        ],
-        "resale_curve": {
-          "1yr": "number (retention %)",
-          "2yr": "number (retention %)",
-          "3yr_plus": "number (retention %)"
-        },
-        "repair_stats": {
-          "total_reports": "number",
-          "failure_types": [
+          "purchase_price": "number (KRW, A0 Naver Shopping lprice)",
+          "annual_consumable_cost": "number (KRW, 연간 소모품 비용)",
+          "consumable_cost_3yr": "number (KRW, = annual_consumable_cost × 3)",
+          "real_cost_3yr": "number (KRW, = purchase_price + consumable_cost_3yr)",
+          "consumable_breakdown": [
             {
-              "type": "string",
-              "count": "number",
-              "avg_cost": "number",
-              "probability": "number (0-1)"
+              "name": "string",
+              "unit_price": "number (KRW)",
+              "replacement_cycle_months": "number",
+              "changes_per_year": "number",
+              "annual_cost": "number (KRW)",
+              "compatible_available": "boolean",
+              "compatible_price": "number | null (KRW)"
             }
           ]
         },
-        "maintenance_tasks": [
-          {
-            "task": "string",
-            "frequency_per_month": "number",
-            "minutes_per_task": "number",
-            "automated": "boolean (optional, true=auto, false=manual)"
-          }
-        ]
+        "review_insights": {
+          "reviews_collected": "number",
+          "purchase_motivations": ["string"],
+          "sentiment_keywords": "object",
+          "hidden_differentiator": "string",
+          "environment_splits": ["string"]
+        },
+        "as_reputation": "string (optional, from A5)",
+        "as_reputation_summary": "string (optional, from A5)"
       }
-    ]
+    ],
+    "summary": {
+      "cheapest": {"name": "string", "real_cost_3yr": "number"},
+      "most_expensive": {"name": "string", "real_cost_3yr": "number"},
+      "cost_difference": "number (KRW)",
+      "cost_difference_pct": "number (%)"
+    }
   }
 }

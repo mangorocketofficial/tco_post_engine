@@ -1,0 +1,27 @@
+# Category config for A-0 Product Selector: Pet GPS Tracker
+name: "pet_gps_tracker"
+search_terms: ["강아지 GPS", "펫 GPS 트래커", "반려동물 위치추적기", "강아지 위치추적"]
+danawa_category_code: ""
+
+tco_years: 2
+domain: "pet"
+subscription_model: true
+multi_unit_label: "마리"
+
+negative_keywords: ["배터리", "끊김", "부정확", "구독비싸", "해지불가", "오차"]
+positive_keywords: ["정확", "배터리좋음", "안심", "추천", "실시간"]
+
+price_range:
+  min: 30000
+  max: 300000
+
+max_product_age_months: 24
+min_community_posts: 10
+
+# A2 소모품 정보
+consumables:
+  tco_tier: "essential"
+  tco_label: "2년 구독료 포함 총비용"
+  items:
+    - name: "월 통신 구독료"
+      cycle: "매월"

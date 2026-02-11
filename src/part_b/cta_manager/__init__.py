@@ -7,6 +7,7 @@ All links include UTM parameters for click attribution.
 """
 
 from .manager import CTAManager
+from .image_scraper import CoupangImageScraper
 from .models import (
     AffiliateLink,
     AffiliatePlatform,
@@ -19,6 +20,7 @@ from .models import (
 
 __all__ = [
     "CTAManager",
+    "CoupangImageScraper",
     "AffiliateLink",
     "AffiliatePlatform",
     "CTAEntry",

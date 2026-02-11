@@ -9,66 +9,25 @@ from typing import Optional
 
 
 @dataclass
+class ConsumableItem:
+    """A single consumable cost item."""
+    name: str
+    unit_price: int
+    changes_per_year: float
+    annual_cost: int
+    compatible_available: bool = False
+    compatible_price: int | None = None
+
+
+@dataclass
 class TCOData:
     """Core TCO metrics for a product."""
-    purchase_price_avg: int  # KRW
-    purchase_price_min: int  # KRW
-    resale_value_1yr: int  # KRW — median resale within 1 year
-    resale_value_2yr: int  # KRW — median resale at 1-2 years
-    resale_value_3yr_plus: int  # KRW — median resale at 3+ years
-    expected_repair_cost: int  # KRW
-    real_cost_3yr: int  # KRW = purchase + repair - resale(2yr)
-    as_turnaround_days: float  # avg days
-    monthly_maintenance_minutes: int  # min/month
-
-
-@dataclass
-class PriceHistoryEntry:
-    """Daily price tracking entry."""
-    date: str  # YYYY-MM-DD
-    price: int
-    source: str  # danawa | coupang | naver
-    is_sale: bool
-
-
-@dataclass
-class ResaleCurve:
-    """Price retention percentages at yearly intervals."""
-    yr_1: float  # 1-year retention %
-    yr_2: float  # 2-year retention %
-    yr_3_plus: float  # 3+ year retention %
-
-    def to_dict(self) -> dict:
-        return {
-            "1yr": self.yr_1,
-            "2yr": self.yr_2,
-            "3yr_plus": self.yr_3_plus,
-        }
-
-
-@dataclass
-class FailureType:
-    """Repair failure category statistics."""
-    type: str  # sensor, motor, software, battery, etc.
-    count: int
-    avg_cost: int  # KRW
-    probability: float  # 0-1
-
-
-@dataclass
-class RepairStats:
-    """Aggregated repair statistics for a product."""
-    total_reports: int
-    failure_types: list[FailureType] = field(default_factory=list)
-
-
-@dataclass
-class MaintenanceTask:
-    """Regular maintenance task definition."""
-    task: str
-    frequency_per_month: float
-    minutes_per_task: int
-    automated: Optional[bool] = None  # True=auto, False=manual, None=unknown
+    purchase_price: int  # KRW — from A0 Naver Shopping lprice
+    annual_consumable_cost: int  # KRW
+    tco_years: int = 3  # TCO calculation period (tech=3, pet=2)
+    consumable_cost_total: int = 0  # KRW = annual × tco_years
+    real_cost_total: int = 0  # KRW = purchase + consumable_cost_total
+    consumable_breakdown: list[ConsumableItem] = field(default_factory=list)
 
 
 @dataclass
@@ -79,10 +38,6 @@ class Product:
     brand: str
     release_date: str  # YYYY-MM-DD
     tco: TCOData
-    price_history: list[PriceHistoryEntry] = field(default_factory=list)
-    resale_curve: Optional[ResaleCurve] = None
-    repair_stats: Optional[RepairStats] = None
-    maintenance_tasks: list[MaintenanceTask] = field(default_factory=list)
 
     # Content generation fields (added by Part B)
     cta_link: str = ""
@@ -137,10 +92,7 @@ class CredibilityStats:
     """Data counts for Section 1 credibility claim."""
     total_review_count: int
     price_data_count: int
-    resale_data_count: int
-    repair_data_count: int
-    as_review_count: int
-    maintenance_data_count: int
+    consumable_data_count: int
 
 
 @dataclass
@@ -165,6 +117,9 @@ class BlogPostData:
     category_criteria: Optional[CategoryCriteria] = None  # Section 2
     price_volatility: Optional[PriceVolatility] = None
     price_updated_date: str = ""
+    # Multi-category support
+    tco_years: int = 3  # TCO period (tech=3, pet=2)
+    domain: str = "tech"  # "tech" | "pet"
 
     def to_template_context(self) -> dict:
         """Convert to Jinja2 template context dictionary."""
@@ -188,10 +143,7 @@ class BlogPostData:
             ],
             "total_review_count": self.credibility.total_review_count,
             "price_data_count": self.credibility.price_data_count,
-            "resale_data_count": self.credibility.resale_data_count,
-            "repair_data_count": self.credibility.repair_data_count,
-            "as_review_count": self.credibility.as_review_count,
-            "maintenance_data_count": self.credibility.maintenance_data_count,
+            "consumable_data_count": self.credibility.consumable_data_count,
             "category_criteria": {
                 "myth_busting": self.category_criteria.myth_busting,
                 "real_differentiator": self.category_criteria.real_differentiator,
@@ -208,40 +160,33 @@ class BlogPostData:
 
     def _product_to_dict(self, product: Product) -> dict:
         """Convert Product to dictionary for template."""
-        # Calculate automation rate from maintenance tasks
-        auto_count = sum(1 for mt in product.maintenance_tasks if mt.automated is True)
-        total_count = len(product.maintenance_tasks)
-        automation_rate = round((auto_count / total_count) * 100) if total_count > 0 else 0
-
         return {
             "product_id": product.product_id,
             "name": product.name,
             "brand": product.brand,
             "release_date": product.release_date,
             "tco": {
-                "purchase_price_avg": product.tco.purchase_price_avg,
-                "purchase_price_min": product.tco.purchase_price_min,
-                "resale_value_1yr": product.tco.resale_value_1yr,
-                "resale_value_2yr": product.tco.resale_value_2yr,
-                "resale_value_3yr_plus": product.tco.resale_value_3yr_plus,
-                "expected_repair_cost": product.tco.expected_repair_cost,
-                "real_cost_3yr": product.tco.real_cost_3yr,
-                "as_turnaround_days": product.tco.as_turnaround_days,
-                "monthly_maintenance_minutes": product.tco.monthly_maintenance_minutes,
+                "purchase_price": product.tco.purchase_price,
+                "annual_consumable_cost": product.tco.annual_consumable_cost,
+                "tco_years": product.tco.tco_years,
+                "consumable_cost_total": product.tco.consumable_cost_total,
+                "real_cost_total": product.tco.real_cost_total,
+                "consumable_breakdown": [
+                    {
+                        "name": c.name,
+                        "unit_price": c.unit_price,
+                        "changes_per_year": c.changes_per_year,
+                        "annual_cost": c.annual_cost,
+                        "compatible_available": c.compatible_available,
+                        "compatible_price": c.compatible_price,
+                    }
+                    for c in product.tco.consumable_breakdown
+                ],
             },
-            "resale_curve": product.resale_curve.to_dict() if product.resale_curve else {},
             "cta_link": product.cta_link,
             "highlight": product.highlight,
             "slot_label": product.slot_label,
             "verdict": product.verdict,
             "recommendation_reason": product.recommendation_reason,
             "caution_reason": product.caution_reason,
-            "automation_rate": automation_rate,
-            "maintenance_tasks": [
-                {
-                    "task": mt.task,
-                    "automated": mt.automated,
-                }
-                for mt in product.maintenance_tasks
-            ],
         }

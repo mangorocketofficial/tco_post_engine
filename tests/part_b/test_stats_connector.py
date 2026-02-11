@@ -47,9 +47,9 @@ def sample_metrics() -> PostMetrics:
         avg_time_on_page=180.5,
         scroll_depth_avg=0.72,
         cta_clicks=CTAClickMetrics(
-            section_3_clicks=45,
-            section_4_clicks=30,
-            section_5_clicks=25,
+            section_2_clicks=45,
+            section_3_clicks=30,
+            section_4_clicks=25,
             total_clicks=100,
         ),
         conversion_rate=0.067,
@@ -71,9 +71,9 @@ def sample_metrics_2() -> PostMetrics:
         bounce_rate=0.42,
         avg_time_on_page=120.0,
         cta_clicks=CTAClickMetrics(
-            section_3_clicks=20,
-            section_4_clicks=15,
-            section_5_clicks=10,
+            section_2_clicks=20,
+            section_3_clicks=15,
+            section_4_clicks=10,
             total_clicks=45,
         ),
         conversion_rate=0.056,
@@ -120,15 +120,15 @@ class TestPostMetrics:
 class TestCTAClickMetrics:
     def test_click_distribution(self):
         clicks = CTAClickMetrics(
-            section_3_clicks=50,
-            section_4_clicks=30,
-            section_5_clicks=20,
+            section_2_clicks=50,
+            section_3_clicks=30,
+            section_4_clicks=20,
             total_clicks=100,
         )
         dist = clicks.click_distribution
-        assert dist["section_3"] == 0.5
-        assert dist["section_4"] == 0.3
-        assert dist["section_5"] == 0.2
+        assert dist["section_2"] == 0.5
+        assert dist["section_3"] == 0.3
+        assert dist["section_4"] == 0.2
 
     def test_click_distribution_zero_total(self):
         clicks = CTAClickMetrics()
@@ -234,20 +234,20 @@ class TestSectionPerformance:
         perf = connector.evaluate_section_performance(sample_metrics)
 
         assert perf.section_0_bounce_rate == 0.35
-        assert perf.section_2_scroll_depth == 0.72
-        assert perf.section_3_cta_click_rate > 0
-        assert perf.section_4_time_on_section > 0
+        assert perf.section_1_scroll_depth == 0.72
+        assert perf.section_2_cta_click_rate > 0
+        assert perf.section_3_time_on_section > 0
 
     def test_cta_click_rate_calculation(self, connector, sample_metrics):
         perf = connector.evaluate_section_performance(sample_metrics)
         # 100 clicks / 1500 views = 0.0667
         expected = 100 / 1500
-        assert abs(perf.section_3_cta_click_rate - expected) < 0.001
+        assert abs(perf.section_2_cta_click_rate - expected) < 0.001
 
     def test_zero_views_performance(self, connector):
         m = PostMetrics(post_id="empty", title="Empty", category="test", publish_date="2026-01-01")
         perf = connector.evaluate_section_performance(m)
-        assert perf.section_3_cta_click_rate == 0
+        assert perf.section_2_cta_click_rate == 0
 
 
 # === Test: Persistence ===

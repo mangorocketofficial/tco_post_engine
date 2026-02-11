@@ -19,6 +19,8 @@ from .models import (
 from .pipeline import PublishPipeline
 from .platforms import NaverBlogPublisher, TistoryPublisher
 from .processor import PostProcessor
+from .storage import SupabaseStorage
+from .supabase_publisher import SupabasePublisher
 
 __all__ = [
     "ExportFormat",
@@ -31,5 +33,7 @@ __all__ = [
     "PublishPlatform",
     "PublishResult",
     "SEOMetaTags",
+    "SupabasePublisher",
+    "SupabaseStorage",
     "TistoryPublisher",
 ]

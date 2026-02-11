@@ -294,6 +294,7 @@ class FinalSelector:
                 price=sp.candidate.price,
                 source=source,
                 selection_reasons=reasons,
+                slot=sp.slot,  # Preserve slot from A0
                 a0_rank=sp.rank,
                 a0_scores=sp.scores,
             ))
@@ -313,6 +314,7 @@ class FinalSelector:
                     price=gaseonbi_selected.candidate.price,
                     source="both",
                     selection_reasons=reasons,
+                    slot=gaseonbi_selected.slot,  # Preserve slot from A0
                     a0_rank=gaseonbi_selected.rank,
                     a0_scores=gaseonbi_selected.scores,
                     recommendation_mention_count=gaseonbi_mention.mention_count,
@@ -321,8 +323,12 @@ class FinalSelector:
                 ))
             else:
                 # Default / Overlap-1: pure A-0.1 product in slot 3
+                # Heuristic: assign value slot by default for blog recommendations
+                # (assumption: blog recommendations tend toward budget/value)
+                assigned_slot = "value"
                 reasons = [
                     f"Blog recommendation #1 (mentioned {gaseonbi_mention.mention_count} times)",
+                    f"Assigned to {assigned_slot} slot (blog recommendation)",
                 ]
                 final_products.append(FinalProduct(
                     rank=len(final_products) + 1,
@@ -331,6 +337,7 @@ class FinalSelector:
                     price=0,
                     source="a0.1",
                     selection_reasons=reasons,
+                    slot=assigned_slot,
                     recommendation_mention_count=gaseonbi_mention.mention_count,
                     recommendation_normalized_name=gaseonbi_mention.normalized_name,
                 ))

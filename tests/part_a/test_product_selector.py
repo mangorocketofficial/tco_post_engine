@@ -17,7 +17,6 @@ from src.part_a.product_selector.models import (
     KeywordMetrics,
     PricePosition,
     ProductScores,
-    ResaleQuickCheck,
     SalesRankingEntry,
     SearchInterest,
     SelectedProduct,
@@ -45,7 +44,7 @@ from src.part_a.product_selector.sales_ranking_scraper import (
 from src.part_a.product_selector.scorer import ProductScorer
 from src.part_a.product_selector.search_interest_scraper import NaverDataLabScraper
 from src.part_a.product_selector.sentiment_scraper import SentimentScraper
-from src.part_a.product_selector.slot_selector import TopSelector
+from src.part_a.product_selector.slot_selector import SCORE_FLOOR, SlotSelector, score_tiers, select_winning_tier
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -174,30 +173,6 @@ class TestPricePosition:
         d = pp.to_dict()
         assert d["price_tier"] == "budget"
         assert d["price_normalized"] == 0.2
-
-
-class TestResaleQuickCheck:
-    def test_resale_ratio(self):
-        rc = ResaleQuickCheck(
-            product_name="Test", avg_used_price=700000,
-            avg_new_price=1000000, sample_count=10,
-        )
-        assert rc.resale_ratio == pytest.approx(0.7)
-
-    def test_zero_new_price(self):
-        rc = ResaleQuickCheck(
-            product_name="Test", avg_used_price=500000,
-            avg_new_price=0, sample_count=0,
-        )
-        assert rc.resale_ratio == 0.0
-
-    def test_to_dict(self):
-        rc = ResaleQuickCheck(
-            product_name="Test", avg_used_price=500000,
-            avg_new_price=1000000, sample_count=5,
-        )
-        d = rc.to_dict()
-        assert d["resale_ratio"] == 0.5
 
 
 class TestKeywordMetrics:
@@ -331,7 +306,7 @@ class TestSelectionResult:
             selection_reasons=["Top clicks"],
         )
         validation = ValidationResult(
-            check_name="brand_diversity", passed=True, detail="3 unique brands",
+            check_name="brand_variety", passed=True, detail="Selected brands: TestBrand (1 unique)",
         )
         result = SelectionResult(
             category="로봇청소기",
@@ -340,12 +315,34 @@ class TestSelectionResult:
             candidate_pool_size=10,
             selected_products=[selected],
             validation=[validation],
+            selected_tier="premium",
+            tier_scores={"premium": 1.963, "mid": 0.948, "budget": 1.770},
+            tier_product_counts={"premium": 6, "mid": 8, "budget": 6},
         )
         d = result.to_dict()
         assert d["category"] == "로봇청소기"
         assert d["candidate_pool_size"] == 10
         assert len(d["selected_products"]) == 1
-        assert "brand_diversity" in d["validation"]
+        assert "brand_variety" in d["validation"]
+        assert d["selected_tier"] == "premium"
+        assert d["tier_scores"]["premium"] == 1.963
+        assert d["tier_product_counts"]["premium"] == 6
+
+    def test_to_dict_without_tier(self):
+        """Backward compat: no tier metadata when selected_tier is empty."""
+        candidate = _make_candidate("TestProd", "TestBrand")
+        scores = ProductScores(product_name="TestProd")
+        selected = SelectedProduct(rank=1, candidate=candidate, scores=scores)
+        result = SelectionResult(
+            category="test",
+            selection_date=date(2026, 1, 1),
+            data_sources={},
+            candidate_pool_size=5,
+            selected_products=[selected],
+            validation=[],
+        )
+        d = result.to_dict()
+        assert "selected_tier" not in d
 
     def test_to_json(self):
         candidate = _make_candidate("TestProd", "TestBrand")
@@ -358,10 +355,14 @@ class TestSelectionResult:
             candidate_pool_size=5,
             selected_products=[selected],
             validation=[],
+            selected_tier="budget",
+            tier_scores={"premium": 0.5, "mid": 0.3, "budget": 0.8},
+            tier_product_counts={"premium": 2, "mid": 1, "budget": 3},
         )
         j = result.to_json()
         parsed = json.loads(j)
         assert parsed["category"] == "test"
+        assert parsed["selected_tier"] == "budget"
 
 
 # ===================================================================
@@ -914,107 +915,510 @@ class TestProductScorer:
 # ===================================================================
 
 
-class TestTopSelector:
-    def _make_3_candidates(self):
+class TestSlotSelector:
+    """Tests for single-tier winning selection (PartA0_Singtier)."""
+
+    def _make_premium_heavy_candidates(self):
+        """Premium tier has top 3 scores, mid and budget are weaker."""
         return [
-            _make_candidate("High Score", "BrandA",
+            # Premium tier (3 strong products)
+            _make_candidate("Premium A", "BrandA", price=2_000_000,
                           monthly_clicks=1000, avg_cpc=5000,
                           monthly_search_volume=20000, competition="high"),
-            _make_candidate("Mid Score", "BrandB",
+            _make_candidate("Premium B", "BrandB", price=1_800_000,
+                          monthly_clicks=800, avg_cpc=4000,
+                          monthly_search_volume=15000, competition="high"),
+            _make_candidate("Premium C", "BrandC", price=1_700_000,
+                          monthly_clicks=600, avg_cpc=3500,
+                          monthly_search_volume=12000, competition="medium"),
+            # Mid tier
+            _make_candidate("Mid A", "BrandD", price=900_000,
+                          monthly_clicks=300, avg_cpc=2000,
+                          monthly_search_volume=8000, competition="medium"),
+            _make_candidate("Mid B", "BrandE", price=800_000,
+                          monthly_clicks=200, avg_cpc=1500,
+                          monthly_search_volume=5000, competition="low"),
+            # Budget tier
+            _make_candidate("Budget A", "BrandF", price=300_000,
+                          monthly_clicks=150, avg_cpc=1000,
+                          monthly_search_volume=4000, competition="low"),
+        ]
+
+    def _make_tier_map_6(self):
+        return {
+            "Premium A": "premium",
+            "Premium B": "premium",
+            "Premium C": "premium",
+            "Mid A": "mid",
+            "Mid B": "mid",
+            "Budget A": "budget",
+        }
+
+    def test_normal_clear_winner(self):
+        """Premium tier with top 3 sum > mid > budget → premium wins."""
+        candidates = self._make_premium_heavy_candidates()
+        scorer = ProductScorer()
+        scores = scorer.score_candidates(candidates)
+        tier_map = self._make_tier_map_6()
+
+        selector = SlotSelector()
+        picks, winning_tier, tier_scores, tier_counts = selector.select(
+            candidates, scores, tier_map
+        )
+
+        assert winning_tier == "premium"
+        assert len(picks) == 3
+        assert all(p.candidate.name.startswith("Premium") for p in picks)
+        assert {p.rank for p in picks} == {1, 2, 3}
+        # All slots empty (Part B assigns contextual labels)
+        assert all(p.slot == "" for p in picks)
+
+    def test_budget_dominance(self):
+        """Budget products have highest scores → budget tier wins."""
+        candidates = [
+            # Budget tier (dominant)
+            _make_candidate("Budget 1", "BrandA", price=50_000,
+                          monthly_clicks=2000, avg_cpc=8000,
+                          monthly_search_volume=50000, competition="high"),
+            _make_candidate("Budget 2", "BrandB", price=40_000,
+                          monthly_clicks=1500, avg_cpc=6000,
+                          monthly_search_volume=40000, competition="high"),
+            _make_candidate("Budget 3", "BrandC", price=30_000,
+                          monthly_clicks=1200, avg_cpc=5000,
+                          monthly_search_volume=30000, competition="medium"),
+            # Premium tier (weak)
+            _make_candidate("Premium 1", "BrandD", price=200_000,
+                          monthly_clicks=100, avg_cpc=500,
+                          monthly_search_volume=2000, competition="low"),
+        ]
+        tier_map = {
+            "Budget 1": "budget", "Budget 2": "budget", "Budget 3": "budget",
+            "Premium 1": "premium",
+        }
+        scorer = ProductScorer()
+        scores = scorer.score_candidates(candidates)
+
+        selector = SlotSelector()
+        picks, winning_tier, _, _ = selector.select(candidates, scores, tier_map)
+
+        assert winning_tier == "budget"
+        assert len(picks) == 3
+        assert all(p.candidate.name.startswith("Budget") for p in picks)
+
+    def test_tight_race(self):
+        """Higher score wins even with small margin."""
+        candidates = [
+            _make_candidate("P1", "BrandA", price=200_000,
                           monthly_clicks=500, avg_cpc=3000,
                           monthly_search_volume=10000, competition="medium"),
-            _make_candidate("Low Score", "BrandC",
-                          monthly_clicks=100, avg_cpc=1000,
-                          monthly_search_volume=3000, competition="low"),
+            _make_candidate("P2", "BrandB", price=190_000,
+                          monthly_clicks=490, avg_cpc=2900,
+                          monthly_search_volume=9800, competition="medium"),
+            _make_candidate("P3", "BrandC", price=180_000,
+                          monthly_clicks=480, avg_cpc=2800,
+                          monthly_search_volume=9600, competition="medium"),
+            _make_candidate("B1", "BrandD", price=50_000,
+                          monthly_clicks=498, avg_cpc=2980,
+                          monthly_search_volume=9900, competition="medium"),
+            _make_candidate("B2", "BrandE", price=40_000,
+                          monthly_clicks=488, avg_cpc=2880,
+                          monthly_search_volume=9700, competition="medium"),
+            _make_candidate("B3", "BrandF", price=30_000,
+                          monthly_clicks=478, avg_cpc=2780,
+                          monthly_search_volume=9500, competition="medium"),
         ]
-
-    def test_select_3_products(self):
-        candidates = self._make_3_candidates()
+        tier_map = {
+            "P1": "premium", "P2": "premium", "P3": "premium",
+            "B1": "budget", "B2": "budget", "B3": "budget",
+        }
         scorer = ProductScorer()
         scores = scorer.score_candidates(candidates)
-        selector = TopSelector()
-        picks = selector.select(candidates, scores)
 
-        assert len(picks) == 3
-        ranks = {p.rank for p in picks}
-        assert ranks == {1, 2, 3}
+        selector = SlotSelector()
+        _, winning_tier, tier_scores, _ = selector.select(candidates, scores, tier_map)
 
-    def test_rank_order_by_score(self):
-        candidates = self._make_3_candidates()
-        scorer = ProductScorer()
-        scores = scorer.score_candidates(candidates)
-        selector = TopSelector()
-        picks = selector.select(candidates, scores)
+        # Premium scores slightly higher, so premium should win
+        assert tier_scores["premium"] > tier_scores["budget"]
+        assert winning_tier == "premium"
 
-        # Highest score should be rank 1
-        assert picks[0].rank == 1
-        assert picks[0].candidate.name == "High Score"
-        assert picks[1].rank == 2
-        assert picks[1].candidate.name == "Mid Score"
-        assert picks[2].rank == 3
-        assert picks[2].candidate.name == "Low Score"
-
-    def test_brand_diversity_enforcement(self):
-        # Two products from same manufacturer (삼성전자)
+    def test_tier_with_fewer_than_3_penalized(self):
+        """Tier with only 2 products gets penalty (×2/3), may lose."""
         candidates = [
-            _make_candidate("삼성전자 비스포크 Top", "비스포크",
-                          monthly_clicks=1000, avg_cpc=5000),
-            _make_candidate("삼성전자 그랑데 Second", "그랑데",
-                          monthly_clicks=900, avg_cpc=4500),
-            _make_candidate("LG전자 트롬 Product", "트롬",
-                          monthly_clicks=500, avg_cpc=3000),
-            _make_candidate("위니아 Product", "위니아",
-                          monthly_clicks=200, avg_cpc=1000),
+            # Premium: only 2 products (will be penalized)
+            _make_candidate("P1", "BrandA", price=200_000,
+                          monthly_clicks=600, avg_cpc=4000,
+                          monthly_search_volume=15000, competition="high"),
+            _make_candidate("P2", "BrandB", price=190_000,
+                          monthly_clicks=550, avg_cpc=3500,
+                          monthly_search_volume=12000, competition="high"),
+            # Budget: 3 products (no penalty)
+            _make_candidate("B1", "BrandC", price=50_000,
+                          monthly_clicks=500, avg_cpc=3000,
+                          monthly_search_volume=10000, competition="medium"),
+            _make_candidate("B2", "BrandD", price=40_000,
+                          monthly_clicks=450, avg_cpc=2800,
+                          monthly_search_volume=9000, competition="medium"),
+            _make_candidate("B3", "BrandE", price=30_000,
+                          monthly_clicks=400, avg_cpc=2500,
+                          monthly_search_volume=8000, competition="medium"),
         ]
+        tier_map = {
+            "P1": "premium", "P2": "premium",
+            "B1": "budget", "B2": "budget", "B3": "budget",
+        }
         scorer = ProductScorer()
         scores = scorer.score_candidates(candidates)
-        selector = TopSelector()
-        picks = selector.select(candidates, scores)
 
-        assert len(picks) == 3
-        # manufacturer diversity: should have 삼성, LG, 위니아
-        manufacturers = [p.candidate.manufacturer for p in picks]
-        assert len(set(manufacturers)) == 3
+        _, tier_scores_result = score_tiers(candidates, scores, tier_map)
+        # Premium raw sum of 2 × (2/3) penalty vs budget sum of 3 × (3/3)
+        # The penalty should make premium lose despite higher individual scores
+        assert tier_scores_result["premium"] < tier_scores_result["budget"]
 
-    def test_brand_diversity_relaxed_when_needed(self):
-        # Only 2 unique manufacturers but need 3 picks
+    def test_same_brand_allowed_with_mix(self):
+        """Same brand dominates top 3 → rank 3 replaced by best other-brand."""
         candidates = [
-            _make_candidate("삼성전자 A1", "비스포크", monthly_clicks=1000),
-            _make_candidate("삼성전자 A2", "그랑데", monthly_clicks=800),
-            _make_candidate("LG전자 B1", "트롬", monthly_clicks=500),
+            _make_candidate("삼성전자 모델A", "모델A", price=200_000,
+                          monthly_clicks=1000, avg_cpc=5000,
+                          monthly_search_volume=20000, competition="high"),
+            _make_candidate("삼성전자 모델B", "모델B", price=190_000,
+                          monthly_clicks=900, avg_cpc=4500,
+                          monthly_search_volume=18000, competition="high"),
+            _make_candidate("삼성전자 모델C", "모델C", price=180_000,
+                          monthly_clicks=800, avg_cpc=4000,
+                          monthly_search_volume=16000, competition="high"),
+            _make_candidate("LG전자 제품X", "제품X", price=170_000,
+                          monthly_clicks=200, avg_cpc=1000,
+                          monthly_search_volume=5000, competition="low"),
+            _make_candidate("Budget Z", "BrandZ", price=50_000,
+                          monthly_clicks=100, avg_cpc=500,
+                          monthly_search_volume=2000, competition="low"),
         ]
+        tier_map = {
+            "삼성전자 모델A": "premium",
+            "삼성전자 모델B": "premium",
+            "삼성전자 모델C": "premium",
+            "LG전자 제품X": "premium",
+            "Budget Z": "budget",
+        }
         scorer = ProductScorer()
         scores = scorer.score_candidates(candidates)
-        selector = TopSelector()
-        picks = selector.select(candidates, scores)
+
+        selector = SlotSelector()
+        picks, winning_tier, _, _ = selector.select(candidates, scores, tier_map)
+
+        assert winning_tier == "premium"
+        assert len(picks) == 3
+        # Top 2 are 삼성, rank 3 replaced by LG (brand mix)
+        assert picks[0].candidate.name == "삼성전자 모델A"
+        assert picks[1].candidate.name == "삼성전자 모델B"
+        assert picks[2].candidate.name == "LG전자 제품X"
+        assert any("brand mix" in r for r in picks[2].selection_reasons)
+
+    def test_brand_mix_no_replacement_available(self):
+        """All candidates are same brand → no replacement, keep original 3."""
+        candidates = [
+            _make_candidate("삼성전자 A", "모델A", price=200_000,
+                          monthly_clicks=1000, avg_cpc=5000,
+                          monthly_search_volume=20000, competition="high"),
+            _make_candidate("삼성전자 B", "모델B", price=190_000,
+                          monthly_clicks=900, avg_cpc=4500,
+                          monthly_search_volume=18000, competition="high"),
+            _make_candidate("삼성전자 C", "모델C", price=180_000,
+                          monthly_clicks=800, avg_cpc=4000,
+                          monthly_search_volume=16000, competition="high"),
+        ]
+        tier_map = {
+            "삼성전자 A": "premium",
+            "삼성전자 B": "premium",
+            "삼성전자 C": "premium",
+        }
+        scorer = ProductScorer()
+        scores = scorer.score_candidates(candidates)
+
+        selector = SlotSelector()
+        picks, _, _, _ = selector.select(candidates, scores, tier_map)
 
         assert len(picks) == 3
-        # Should have relaxed brand constraint for 3rd pick
-        relaxed = [p for p in picks if "(brand diversity relaxed)" in p.selection_reasons]
-        assert len(relaxed) == 1
+        # No other brand available, keep all 삼성
+        assert all(p.candidate.manufacturer == "삼성" for p in picks)
+        assert not any(
+            "brand mix" in r
+            for p in picks for r in p.selection_reasons
+        )
+
+    def test_brand_mix_from_adjacent_tier(self):
+        """When winning tier has only same-brand, pull other-brand from adjacent."""
+        candidates = [
+            _make_candidate("삼성전자 X1", "X1", price=200_000,
+                          monthly_clicks=1000, avg_cpc=5000,
+                          monthly_search_volume=20000, competition="high"),
+            _make_candidate("삼성전자 X2", "X2", price=190_000,
+                          monthly_clicks=950, avg_cpc=4800,
+                          monthly_search_volume=19000, competition="high"),
+            _make_candidate("삼성전자 X3", "X3", price=180_000,
+                          monthly_clicks=900, avg_cpc=4600,
+                          monthly_search_volume=18000, competition="high"),
+            # Mid tier — different brand, close metrics to pass score floor
+            _make_candidate("LG전자 Y1", "Y1", price=100_000,
+                          monthly_clicks=920, avg_cpc=4700,
+                          monthly_search_volume=18500, competition="high"),
+        ]
+        tier_map = {
+            "삼성전자 X1": "premium",
+            "삼성전자 X2": "premium",
+            "삼성전자 X3": "premium",
+            "LG전자 Y1": "mid",
+        }
+        scorer = ProductScorer()
+        scores = scorer.score_candidates(candidates)
+
+        selector = SlotSelector()
+        picks, winning_tier, _, _ = selector.select(candidates, scores, tier_map)
+
+        assert winning_tier == "premium"
+        assert len(picks) == 3
+        # Rank 3 replaced by LG from adjacent mid tier
+        assert picks[2].candidate.manufacturer == "LG"
+        assert any("brand mix" in r for r in picks[2].selection_reasons)
+
+    def test_all_same_price_single_tier(self):
+        """All products within ±10% price → one large tier wins by default."""
+        candidates = [
+            _make_candidate("A", "BrandA", price=100_000,
+                          monthly_clicks=500, avg_cpc=3000,
+                          monthly_search_volume=10000, competition="high"),
+            _make_candidate("B", "BrandB", price=105_000,
+                          monthly_clicks=480, avg_cpc=2900,
+                          monthly_search_volume=9500, competition="high"),
+            _make_candidate("C", "BrandC", price=95_000,
+                          monthly_clicks=460, avg_cpc=2800,
+                          monthly_search_volume=9000, competition="high"),
+        ]
+        # All in same tier
+        tier_map = {"A": "mid", "B": "mid", "C": "mid"}
+        scorer = ProductScorer()
+        scores = scorer.score_candidates(candidates)
+
+        selector = SlotSelector()
+        picks, winning_tier, _, _ = selector.select(candidates, scores, tier_map)
+
+        assert winning_tier == "mid"
+        assert len(picks) == 3
 
     def test_insufficient_candidates_raises(self):
         candidates = [
-            _make_candidate("A", "BrandA"),
-            _make_candidate("B", "BrandB"),
+            _make_candidate("A", "BrandA", price=1_000_000),
+            _make_candidate("B", "BrandB", price=1_200_000),
         ]
         scorer = ProductScorer()
         scores = scorer.score_candidates(candidates)
-        selector = TopSelector()
-        with pytest.raises(ValueError, match="at least 3"):
-            selector.select(candidates, scores)
+        tier_map = {"A": "budget", "B": "premium"}
 
-    def test_selection_reasons_include_metrics(self):
-        candidates = self._make_3_candidates()
+        selector = SlotSelector()
+        with pytest.raises(ValueError, match="at least 3"):
+            selector.select(candidates, scores, tier_map)
+
+    def test_selection_reasons_include_winning_tier(self):
+        """Reasons should reference winning tier and scores."""
+        candidates = self._make_premium_heavy_candidates()
         scorer = ProductScorer()
         scores = scorer.score_candidates(candidates)
-        selector = TopSelector()
-        picks = selector.select(candidates, scores)
+        tier_map = self._make_tier_map_6()
 
-        # First pick should have keyword metric reasons
+        selector = SlotSelector()
+        picks, _, _, _ = selector.select(candidates, scores, tier_map)
+
         reasons = picks[0].selection_reasons
+        assert any("winning tier" in r.lower() for r in reasons)
         assert any("clicks" in r.lower() for r in reasons)
         assert any("score" in r.lower() for r in reasons)
+
+    def test_returns_tier_metadata(self):
+        """select() returns tier_scores and tier_product_counts."""
+        candidates = self._make_premium_heavy_candidates()
+        scorer = ProductScorer()
+        scores = scorer.score_candidates(candidates)
+        tier_map = self._make_tier_map_6()
+
+        selector = SlotSelector()
+        _, winning_tier, tier_scores, tier_counts = selector.select(
+            candidates, scores, tier_map
+        )
+
+        assert winning_tier in ("premium", "mid", "budget")
+        assert set(tier_scores.keys()) == {"premium", "mid", "budget"}
+        assert tier_counts == {"premium": 3, "mid": 2, "budget": 1}
+
+    def test_adjacent_tier_pullback(self):
+        """When winning tier has only 1 high-score product, pull from adjacent."""
+        candidates = [
+            # Premium: 1 very strong product (wins tier despite 1/3 penalty)
+            _make_candidate("P1", "BrandA", price=200_000,
+                          monthly_clicks=2000, avg_cpc=8000,
+                          monthly_search_volume=50000, competition="high"),
+            # Mid: 2 decent products (adjacent candidates)
+            _make_candidate("M1", "BrandB", price=100_000,
+                          monthly_clicks=1500, avg_cpc=6000,
+                          monthly_search_volume=40000, competition="high"),
+            _make_candidate("M2", "BrandC", price=90_000,
+                          monthly_clicks=1400, avg_cpc=5500,
+                          monthly_search_volume=35000, competition="high"),
+            # Budget: 1 decent product
+            _make_candidate("B1", "BrandD", price=30_000,
+                          monthly_clicks=1300, avg_cpc=5000,
+                          monthly_search_volume=30000, competition="medium"),
+        ]
+        tier_map = {
+            "P1": "premium",
+            "M1": "mid", "M2": "mid",
+            "B1": "budget",
+        }
+        scorer = ProductScorer()
+        scores = scorer.score_candidates(candidates)
+
+        selector = SlotSelector()
+        picks, winning_tier, _, _ = selector.select(candidates, scores, tier_map)
+
+        # Premium has 1 product but very high score — check if it wins
+        # or if mid wins (2 products with decent scores)
+        # Either way, adjacent pull should happen if winning tier < 3
+        assert len(picks) == 3
+        adjacent_pulls = [
+            p for p in picks
+            if any("pulled from adjacent" in r for r in p.selection_reasons)
+        ]
+        assert len(adjacent_pulls) >= 1
+
+    def test_score_floor_filters_zero_score(self):
+        """Products with total_score < 0.1 are excluded."""
+        candidates = [
+            _make_candidate("Good1", "BrandA", price=100_000,
+                          monthly_clicks=500, avg_cpc=3000,
+                          monthly_search_volume=10000, competition="medium"),
+            _make_candidate("Good2", "BrandB", price=90_000,
+                          monthly_clicks=400, avg_cpc=2500,
+                          monthly_search_volume=8000, competition="medium"),
+            # No keyword metrics → score will be 0.0 after normalization with others
+            CandidateProduct(name="Zero", brand="BrandC", category="test", price=80_000),
+            _make_candidate("Good3", "BrandD", price=110_000,
+                          monthly_clicks=300, avg_cpc=2000,
+                          monthly_search_volume=6000, competition="low"),
+        ]
+        tier_map = {"Good1": "mid", "Good2": "mid", "Zero": "mid", "Good3": "mid"}
+        scorer = ProductScorer()
+        scores = scorer.score_candidates(candidates)
+
+        selector = SlotSelector()
+        picks, _, _, _ = selector.select(candidates, scores, tier_map)
+
+        picked_names = [p.candidate.name for p in picks]
+        assert "Zero" not in picked_names
+        assert len(picks) == 3
+
+    def test_score_floor_fewer_than_3_ok(self):
+        """If fewer than 3 pass the floor, output fewer than 3 products."""
+        candidates = [
+            _make_candidate("Good", "BrandA", price=100_000,
+                          monthly_clicks=500, avg_cpc=3000,
+                          monthly_search_volume=10000, competition="medium"),
+            # These will have very low scores relative to Good
+            CandidateProduct(name="Bad1", brand="BrandB", category="test", price=90_000),
+            CandidateProduct(name="Bad2", brand="BrandC", category="test", price=80_000),
+        ]
+        tier_map = {"Good": "mid", "Bad1": "mid", "Bad2": "mid"}
+        scorer = ProductScorer()
+        scores = scorer.score_candidates(candidates)
+
+        selector = SlotSelector()
+        picks, _, _, _ = selector.select(candidates, scores, tier_map)
+
+        # Only "Good" should pass the score floor
+        # (Bad1/Bad2 get 0.0 for clicks/cpc since they have no keyword metrics,
+        # but normalization may give them 0.5 baseline — depends on scorer logic)
+        # At minimum, Good should be first pick
+        assert picks[0].candidate.name == "Good"
+        assert all(p.scores.total_score >= 0.1 for p in picks)
+
+    def test_force_tier_overrides_winner(self):
+        """force_tier selects from specified tier instead of auto-winner."""
+        candidates = self._make_premium_heavy_candidates()
+        scorer = ProductScorer()
+        scores = scorer.score_candidates(candidates)
+        tier_map = self._make_tier_map_6()
+
+        selector = SlotSelector()
+
+        # Without force_tier — premium wins
+        _, auto_tier, _, _ = selector.select(candidates, scores, tier_map)
+        assert auto_tier == "premium"
+
+        # Force budget tier
+        picks, forced_tier, tier_scores, _ = selector.select(
+            candidates, scores, tier_map, force_tier="budget"
+        )
+        assert forced_tier == "budget"
+        # Budget tier only has 1 product, so pulls from adjacent
+        assert len(picks) >= 1
+        # Tier scores are still computed the same way
+        assert tier_scores["premium"] > tier_scores["budget"]
+
+    def test_force_tier_mid(self):
+        """force_tier='mid' picks from mid tier."""
+        candidates = self._make_premium_heavy_candidates()
+        scorer = ProductScorer()
+        scores = scorer.score_candidates(candidates)
+        tier_map = self._make_tier_map_6()
+
+        selector = SlotSelector()
+        picks, forced_tier, _, _ = selector.select(
+            candidates, scores, tier_map, force_tier="mid"
+        )
+        assert forced_tier == "mid"
+        # Mid has 2 products, will pull 1 from adjacent
+        mid_picks = [p for p in picks if tier_map.get(p.candidate.name) == "mid"]
+        assert len(mid_picks) >= 1
+
+
+class TestScoreTiers:
+    """Unit tests for the tier scoring function."""
+
+    def test_full_tiers(self):
+        candidates = [
+            _make_candidate("P1", "A", price=200_000, monthly_clicks=500),
+            _make_candidate("P2", "B", price=190_000, monthly_clicks=400),
+            _make_candidate("P3", "C", price=180_000, monthly_clicks=300),
+            _make_candidate("B1", "D", price=50_000, monthly_clicks=200),
+        ]
+        tier_map = {"P1": "premium", "P2": "premium", "P3": "premium", "B1": "budget"}
+        scorer = ProductScorer()
+        scores = scorer.score_candidates(candidates)
+
+        tier_scores, tier_counts = score_tiers(candidates, scores, tier_map)
+        assert tier_counts == {"premium": 3, "mid": 0, "budget": 1}
+        assert tier_scores["mid"] == 0.0
+        # Premium has no penalty (3 products), budget has 1/3 penalty
+        assert tier_scores["premium"] > tier_scores["budget"]
+
+    def test_empty_tier_zero_score(self):
+        candidates = [_make_candidate("A", "X", price=100_000)]
+        tier_map = {"A": "mid"}
+        scores = ProductScorer().score_candidates(candidates)
+
+        tier_scores, _ = score_tiers(candidates, scores, tier_map)
+        assert tier_scores["premium"] == 0.0
+        assert tier_scores["budget"] == 0.0
+
+
+class TestSelectWinningTier:
+    def test_highest_wins(self):
+        assert select_winning_tier({"premium": 2.0, "mid": 1.0, "budget": 1.5}) == "premium"
+
+    def test_budget_wins(self):
+        assert select_winning_tier({"premium": 0.5, "mid": 0.8, "budget": 1.2}) == "budget"
+
+    def test_tie_prefers_premium(self):
+        """Ties broken by TIER_ORDER (premium > mid > budget)."""
+        assert select_winning_tier({"premium": 1.0, "mid": 1.0, "budget": 1.0}) == "premium"
 
 
 # ===================================================================

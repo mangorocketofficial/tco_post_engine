@@ -1,15 +1,11 @@
-"""CLI entry point for the product selector module (A-0 / A-0.1 / Final).
+"""CLI entry point for the product selector module (A-0).
 
 Usage:
     # A-0: Select TOP 3 products for TCO comparison
     python -m src.part_a.product_selector.main --category "로봇청소기"
     python -m src.part_a.product_selector.main --config config/category_robot_vacuum.yaml
 
-    # A-0.1: Find most recommended products from blog search
-    python -m src.part_a.product_selector.main --mode recommend --keyword "드럼세탁기"
-    python -m src.part_a.product_selector.main --mode recommend --keyword "드럼세탁기" --top-n 3
-
-    # Final: Merge A-0 + A-0.1 into final Top 3
+    # Final: A-0 TOP 3 selection (tier-based)
     python -m src.part_a.product_selector.main --mode final --keyword "드럼세탁기"
 """
 
@@ -18,13 +14,13 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from datetime import date
 
 from ..common.config import Config
 from ..database.connection import init_db
 from .category_config import CategoryConfig
-from .final_selector import FinalSelector
+from .models import FinalProduct, FinalSelectionResult
 from .pipeline import ProductSelectionPipeline
-from .recommendation_pipeline import RecommendationPipeline
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,7 +45,7 @@ def _run_select(args: argparse.Namespace) -> None:
         cat_config = CategoryConfig.from_category_name(args.category)
 
     pipeline = ProductSelectionPipeline(cat_config, config)
-    result = pipeline.run()
+    result = pipeline.run(force_tier=getattr(args, "tier", "") or "")
 
     logger.info("=== Product Selection Results: %s ===", result.category)
     logger.info("Candidate pool: %d products", result.candidate_pool_size)
@@ -81,31 +77,8 @@ def _run_select(args: argparse.Namespace) -> None:
         logger.info("Output written to %s", args.output)
 
 
-def _run_recommend(args: argparse.Namespace) -> None:
-    """A-0.1: Blog recommendation pipeline."""
-    if not args.keyword:
-        raise SystemExit("Error: --keyword is required for 'recommend' mode")
-
-    pipeline = RecommendationPipeline()
-    result = pipeline.run(args.keyword, top_n=args.top_n)
-
-    logger.info("=== Recommendation Results ===")
-    logger.info("Keyword: %s", result.keyword)
-    logger.info("Query: %s", result.search_query)
-    logger.info("Blogs searched: %d", result.total_blogs_searched)
-    logger.info("Products extracted: %d", result.total_products_extracted)
-
-    for i, p in enumerate(result.top_products, 1):
-        logger.info("  Top %d: %s (mentioned %d times)", i, p.product_name, p.mention_count)
-
-    if args.output:
-        with open(args.output, "w", encoding="utf-8") as f:
-            json.dump(result.to_dict(), f, ensure_ascii=False, indent=2)
-        logger.info("Output written to %s", args.output)
-
-
 def _run_final(args: argparse.Namespace) -> None:
-    """Integrated A-0 + A-0.1 final selection pipeline."""
+    """A-0 final selection pipeline — TOP 3 from tier-based selection only."""
     keyword = args.keyword or args.category
     if not keyword and not args.config:
         raise SystemExit("Error: --keyword, --category, or --config is required for 'final' mode")
@@ -118,24 +91,35 @@ def _run_final(args: argparse.Namespace) -> None:
     else:
         cat_config = CategoryConfig.from_category_name(keyword)
 
-    # Phase 1: A-0
-    logger.info("=== Phase 1: A-0 Product Selection ===")
+    # A-0: Product Selection
+    logger.info("=== A-0 Product Selection ===")
     a0_pipeline = ProductSelectionPipeline(cat_config, config)
-    a0_result = a0_pipeline.run()
+    a0_result = a0_pipeline.run(force_tier=getattr(args, "tier", "") or "")
 
-    # Phase 2: A-0.1
-    logger.info("=== Phase 2: A-0.1 Blog Recommendation ===")
-    a0_1_pipeline = RecommendationPipeline()
-    a0_1_result = a0_1_pipeline.run(keyword, top_n=2)
+    # Build final result directly from A-0 TOP 3
+    final_products: list[FinalProduct] = []
+    for sp in a0_result.selected_products[:3]:
+        final_products.append(FinalProduct(
+            rank=sp.rank,
+            name=sp.candidate.name,
+            brand=sp.candidate.brand,
+            price=sp.candidate.price,
+            source="a0",
+            selection_reasons=list(sp.selection_reasons),
+            a0_rank=sp.rank,
+            a0_scores=sp.scores,
+        ))
 
-    # Phase 3: Merge
-    logger.info("=== Phase 3: Final Merge ===")
-    selector = FinalSelector()
-    final_result = selector.merge(a0_result, a0_1_result)
+    final_result = FinalSelectionResult(
+        category=a0_result.category,
+        selection_date=date.today(),
+        merge_case="a0_only",
+        a0_result=a0_result,
+        final_products=final_products,
+    )
 
     # Log results
     logger.info("=== Final Selection Results: %s ===", final_result.category)
-    logger.info("Merge case: %s", final_result.merge_case)
     for fp in final_result.final_products:
         logger.info(
             "  #%d: %s — source=%s — price=%s",
@@ -153,40 +137,41 @@ def _run_final(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="A-0 Product Selector / A-0.1 Recommendation / Final Merge"
+        description="A-0 Product Selector"
     )
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["select", "recommend", "final"],
+        choices=["select", "final"],
         default="select",
-        help="Pipeline mode: 'select' (A-0), 'recommend' (A-0.1), or 'final' (merged)",
+        help="Pipeline mode: 'select' (A-0) or 'final' (A-0 TOP 3 output)",
     )
     parser.add_argument(
         "--category",
         type=str,
-        help="[select] Category name (e.g., '로봇청소기')",
+        help="Category name (e.g., '로봇청소기')",
     )
     parser.add_argument(
         "--config",
         type=str,
-        help="[select] Path to category config YAML file",
+        help="Path to category config YAML file",
     )
     parser.add_argument(
         "--keyword",
         type=str,
-        help="[recommend] Category keyword (e.g., '드럼세탁기')",
+        help="Category keyword (e.g., '드럼세탁기')",
     )
     parser.add_argument(
-        "--top-n",
-        type=int,
-        default=2,
-        help="[recommend] Number of top products to return (default: 2)",
+        "--tier",
+        type=str,
+        choices=["premium", "mid", "budget"],
+        default=None,
+        help="Force tier selection instead of auto-selecting winning tier",
     )
     parser.add_argument(
         "--save-db",
         action="store_true",
-        help="[select] Save selection result to SQLite database",
+        help="Save selection result to SQLite database",
     )
     parser.add_argument(
         "--output",
@@ -196,9 +181,7 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if args.mode == "recommend":
-        _run_recommend(args)
-    elif args.mode == "final":
+    if args.mode == "final":
         _run_final(args)
     else:
         _run_select(args)

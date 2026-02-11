@@ -16,9 +16,9 @@ class AffiliatePlatform(str, Enum):
 
 class CTASection(str, Enum):
     """Blog sections where CTAs are placed."""
-    QUICK_PICK = "section_3"  # Section 3: Quick Pick Table
-    DEEP_DIVE = "section_4"  # Section 4: TCO Deep Dive
-    ACTION = "section_5"  # Section 5: Action Trigger
+    QUICK_PICK = "section_2"  # Section 2: 추천 요약표
+    DEEP_DIVE = "section_3"  # Section 3: TCO 심층 분석
+    CHECKLIST = "section_4"  # Section 4: 구매 전 체크리스트
 
 
 # Standard CTA wording per spec

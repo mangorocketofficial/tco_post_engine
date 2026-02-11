@@ -1,0 +1,22 @@
+# Category config for A-0 Product Selector: Humidifier
+name: "가습기"
+search_terms: ["가습기"]
+danawa_category_code: ""
+
+negative_keywords: ["불만", "후회", "실망", "반품", "고장", "AS", "수리", "오류", "물때", "곰팡이"]
+positive_keywords: ["추천", "만족", "최고", "잘샀다", "좋아요", "강추", "조용함"]
+
+price_range:
+  min: 50000
+  max: 500000
+
+max_product_age_months: 18
+min_community_posts: 20
+
+# A2 소모품 정보
+consumables:
+  tco_tier: "optional"
+  tco_label: "3년 필터 포함 총비용"
+  items:
+    - name: "가습필터(자연기화식만)"
+      cycle: "3~6개월"

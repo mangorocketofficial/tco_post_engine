@@ -1,0 +1,31 @@
+# Category config for A-0 Product Selector: Auto Cat Litter Box
+name: "auto_cat_litter"
+search_terms: ["자동 고양이 화장실", "자동 화장실 고양이", "고양이 자동 화장실"]
+danawa_category_code: ""
+
+tco_years: 2
+domain: "pet"
+subscription_model: true
+multi_unit_label: "마리"
+
+negative_keywords: ["고장", "소음", "냄새", "막힘", "오류", "분해", "세척불편", "모래날림"]
+positive_keywords: ["깔끔", "편리", "냄새없음", "자동", "조용", "추천", "위생적"]
+
+price_range:
+  min: 100000
+  max: 2000000
+
+max_product_age_months: 24
+min_community_posts: 15
+
+# A2 소모품 정보
+consumables:
+  tco_tier: "essential"
+  tco_label: "2년 모래·소모품 포함 총비용"
+  items:
+    - name: "고양이 모래"
+      cycle: "2~4주 전체교체"
+    - name: "라이너/봉투"
+      cycle: "3~7일"
+    - name: "탈취필터"
+      cycle: "1~3개월"

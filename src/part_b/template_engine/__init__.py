@@ -1,34 +1,28 @@
 # Template Engine Module
-# Jinja2 blog structure templates with variable slots
+# Data models for blog post structure (kept for Part B data contract)
 
-from .renderer import TemplateRenderer, render_blog_post, load_tco_data_from_json
 from .models import (
     BlogPostData,
     CategoryCriteria,
+    ConsumableItem,
     CredibilityStats,
     FAQ,
     HomeType,
-    MaintenanceTask,
     PriceVolatility,
     Product,
-    ResaleCurve,
     SituationPick,
     TCOData,
 )
 
 __all__ = [
-    "TemplateRenderer",
-    "render_blog_post",
-    "load_tco_data_from_json",
     "BlogPostData",
     "CategoryCriteria",
+    "ConsumableItem",
     "CredibilityStats",
     "FAQ",
     "HomeType",
-    "MaintenanceTask",
     "PriceVolatility",
     "Product",
-    "ResaleCurve",
     "SituationPick",
     "TCOData",
 ]

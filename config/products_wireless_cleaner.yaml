@@ -1,0 +1,43 @@
+# MVP Product List: Wireless Cleaners (무선 청소기)
+# Phase 1 targets 3 products for comparison
+
+category: "무선 청소기"
+
+products:
+  - product_id: "dyson-v15-detect"
+    name: "다이슨 V15 Detect"
+    brand: "다이슨"
+    release_date: "2024-02-20"
+
+  - product_id: "samsung-bespoke-jet-stick"
+    name: "삼성 비스포크 제트스틱"
+    brand: "삼성"
+    release_date: "2024-01-15"
+
+  - product_id: "lg-cordzero-a9"
+    name: "LG 코드제로 A9"
+    brand: "LG"
+    release_date: "2023-11-10"
+
+# Community keyword map for repair/AS search
+keywords:
+  repair: ["수리", "AS", "고장", "서비스센터", "교체", "부품", "배터리"]
+  failure_types: ["배터리", "모터", "청소헤드", "필터", "충전", "흡입력", "소프트웨어"]
+
+# Maintenance task template
+maintenance_tasks:
+  - task: "먼지통 비우기"
+    frequency_per_month: 12
+    minutes_per_task: 2
+  - task: "필터 세척"
+    frequency_per_month: 4
+    minutes_per_task: 3
+  - task: "청소헤드 청소"
+    frequency_per_month: 6
+    minutes_per_task: 5
+  - task: "배터리 관리"
+    frequency_per_month: 2
+    minutes_per_task: 2
+  - task: "충전 스탠드 관리"
+    frequency_per_month: 1
+    minutes_per_task: 3

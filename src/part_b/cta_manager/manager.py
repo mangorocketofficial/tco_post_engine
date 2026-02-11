@@ -220,7 +220,7 @@ class CTAManager:
         """
         product_names = product_names or {}
         entries: list[CTAEntry] = []
-        sections = [CTASection.QUICK_PICK, CTASection.DEEP_DIVE, CTASection.ACTION]
+        sections = [CTASection.QUICK_PICK, CTASection.DEEP_DIVE, CTASection.CHECKLIST]
 
         for product_id in product_ids:
             link = self._links.get(product_id)

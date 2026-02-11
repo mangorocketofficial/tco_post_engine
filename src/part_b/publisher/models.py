@@ -11,6 +11,7 @@ class PublishPlatform(str, Enum):
     """Supported publishing platforms."""
     NAVER = "naver"
     TISTORY = "tistory"
+    SUPABASE = "supabase"
 
 
 class ExportFormat(str, Enum):

@@ -9,7 +9,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.part_a.price_tracker.models import PriceRecord, ProductPriceSummary
-from src.part_a.price_tracker.danawa_scraper import DanawaScraper
+from src.part_a.price_tracker.danawa_scraper import (
+    DanawaScraper,
+    clean_product_name,
+    compute_name_similarity,
+    filter_prices_a0_reference,
+    filter_prices_iqr,
+)
 
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures"
@@ -191,3 +197,170 @@ class TestDanawaScraper:
         assert records[0].price == 1500000
         assert records[0].date == date(2026, 1, 1)
         assert records[1].price == 1490000
+
+    # --- Layer 1: Absolute floor filter ---
+
+    def test_parse_price_floor_filters_sub_1000(self):
+        """Layer 1: Values below 1,000 are treated as 0 (parsing artifacts)."""
+        assert DanawaScraper._parse_price("3원") == 0
+        assert DanawaScraper._parse_price("7원") == 0
+        assert DanawaScraper._parse_price("13원") == 0
+        assert DanawaScraper._parse_price("787") == 0
+        assert DanawaScraper._parse_price("841") == 0
+        assert DanawaScraper._parse_price("999") == 0
+
+    def test_parse_price_floor_keeps_valid(self):
+        """Layer 1: 1,000+ values pass through."""
+        assert DanawaScraper._parse_price("1,000원") == 1000
+        assert DanawaScraper._parse_price("26,100원") == 26100
+        assert DanawaScraper._parse_price("75,890원") == 75890
+
+    def test_layer1_combined_input(self):
+        """Layer 1: Full scenario — only valid prices survive."""
+        raw = ["3원", "7원", "13원", "787원", "841원", "75,890원", "79,810원"]
+        parsed = [DanawaScraper._parse_price(t) for t in raw]
+        valid = [p for p in parsed if p > 0]
+        assert valid == [75890, 79810]
+
+
+class TestFilterPricesIQR:
+    """Layer 2: IQR-based outlier removal."""
+
+    def _make_records(self, prices: list[int]) -> list[PriceRecord]:
+        return [
+            PriceRecord(product_name="test", price=p, source="danawa")
+            for p in prices
+        ]
+
+    def test_iqr_removes_outlier(self):
+        """IQR removes extreme outlier from 6+ records."""
+        prices = [75890, 79810, 80620, 80990, 83730, 389000]
+        records = self._make_records(prices)
+        filtered = filter_prices_iqr(records)
+        remaining_prices = [r.price for r in filtered]
+        assert 389000 not in remaining_prices
+        assert 75890 in remaining_prices
+
+    def test_iqr_skips_when_fewer_than_4(self):
+        """IQR is skipped when fewer than 4 records."""
+        prices = [75890, 79810]
+        records = self._make_records(prices)
+        filtered = filter_prices_iqr(records)
+        assert len(filtered) == 2
+
+    def test_iqr_keeps_tight_cluster(self):
+        """IQR keeps all records when prices are tightly clustered."""
+        prices = [80000, 81000, 82000, 83000, 84000]
+        records = self._make_records(prices)
+        filtered = filter_prices_iqr(records)
+        assert len(filtered) == 5
+
+    def test_iqr_empty_list(self):
+        filtered = filter_prices_iqr([])
+        assert filtered == []
+
+
+class TestFilterPricesA0Reference:
+    """Layer 3: A0 reference price cross-check."""
+
+    def _make_records(self, prices: list[int]) -> list[PriceRecord]:
+        return [
+            PriceRecord(product_name="test", price=p, source="danawa")
+            for p in prices
+        ]
+
+    def test_removes_too_high(self):
+        """Price > 3× reference is removed."""
+        records = self._make_records([26100, 50000, 666440])
+        filtered = filter_prices_a0_reference(records, reference_price=26100)
+        remaining = [r.price for r in filtered]
+        assert 666440 not in remaining
+        assert 26100 in remaining
+        assert 50000 in remaining
+
+    def test_removes_too_low(self):
+        """Price < 0.3× reference is removed."""
+        records = self._make_records([2000, 26100, 50000])
+        filtered = filter_prices_a0_reference(records, reference_price=26100)
+        remaining = [r.price for r in filtered]
+        assert 2000 not in remaining
+
+    def test_skips_when_no_reference(self):
+        """Layer 3 is skipped when A0 price is 0."""
+        records = self._make_records([3000, 26100, 666440])
+        filtered = filter_prices_a0_reference(records, reference_price=0)
+        assert len(filtered) == 3
+
+    def test_all_layers_combined(self):
+        """Full product1 raw data: only prices in reasonable range survive."""
+        # Simulate: raw parse → Layer 1 → Layer 2 → Layer 3
+        raw_texts = [
+            "3원", "7원", "13원", "787원", "841원",
+            "26,100원", "25,000원", "27,500원", "28,000원", "24,500원",
+            "666,440원", "700,120원",
+        ]
+        # Layer 1 (via _parse_price)
+        parsed = [DanawaScraper._parse_price(t) for t in raw_texts]
+        records = [
+            PriceRecord(product_name="test", price=p, source="danawa")
+            for p in parsed if p > 0
+        ]
+        # Layer 2
+        records = filter_prices_iqr(records)
+        # Layer 3
+        records = filter_prices_a0_reference(records, reference_price=26100)
+
+        remaining = [r.price for r in records]
+        # All sub-1000 gone, 666k+ gone, only reasonable shaver prices remain
+        for p in remaining:
+            assert 20000 <= p <= 80000
+
+
+class TestCleanProductName:
+    """Product name cleaning utility."""
+
+    def test_strips_danawa_ui_text(self):
+        dirty = "다이슨 빅+콰이엇 포름알데히드 BP04VS검색하기VS검색 도움말추천상품과스펙비교하세요.닫기"
+        cleaned = clean_product_name(dirty)
+        assert "VS검색하기" not in cleaned
+        assert "VS검색 도움말" not in cleaned
+        assert "추천상품과스펙비교하세요" not in cleaned
+        assert "닫기" not in cleaned
+        assert "다이슨" in cleaned
+        assert "BP04" in cleaned
+
+    def test_strips_purchase_type_labels(self):
+        assert "(일반구매)" not in clean_product_name("AS305DWWA (일반구매)")
+        assert "(공식판매)" not in clean_product_name("LG 제품 (공식판매)")
+
+    def test_preserves_clean_name(self):
+        name = "필립스 9000시리즈 면도기 S9986/55"
+        assert clean_product_name(name) == name
+
+    def test_empty_string(self):
+        assert clean_product_name("") == ""
+
+
+class TestComputeNameSimilarity:
+    """Token-overlap name similarity."""
+
+    def test_exact_match(self):
+        assert compute_name_similarity("브라운 면도기 5", "브라운 면도기 5") == 1.0
+
+    def test_partial_match(self):
+        score = compute_name_similarity(
+            "브라운 면도기 5 시리즈",
+            "브라운 면도기 5 시리즈 5147s",
+        )
+        assert score >= 0.5
+
+    def test_no_match(self):
+        score = compute_name_similarity(
+            "존재하지않는제품XYZ",
+            "다이슨 공기청정기 BP04",
+        )
+        assert score < 0.5
+
+    def test_empty_strings(self):
+        assert compute_name_similarity("", "test") == 0.0
+        assert compute_name_similarity("test", "") == 0.0

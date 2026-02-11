@@ -20,8 +20,8 @@ CREATE TABLE IF NOT EXISTS products (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_products_name_brand
-    ON products(name, brand);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_products_name_brand_category
+    ON products(name, brand, category);
 
 CREATE TABLE IF NOT EXISTS prices (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,41 +38,6 @@ CREATE INDEX IF NOT EXISTS idx_prices_product_date
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_prices_unique
     ON prices(product_id, date, source);
-
-CREATE TABLE IF NOT EXISTS resale_transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    product_id INTEGER NOT NULL,
-    platform TEXT NOT NULL,
-    sale_price INTEGER NOT NULL,
-    months_since_release REAL,
-    condition TEXT DEFAULT 'used',
-    listing_date TEXT,
-    FOREIGN KEY (product_id) REFERENCES products(id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_resale_product
-    ON resale_transactions(product_id);
-
-CREATE TABLE IF NOT EXISTS repair_reports (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    product_id INTEGER NOT NULL,
-    failure_type TEXT NOT NULL,
-    repair_cost INTEGER NOT NULL,
-    as_days INTEGER,
-    sentiment TEXT DEFAULT 'neutral',
-    source_url TEXT,
-    date TEXT,
-    FOREIGN KEY (product_id) REFERENCES products(id)
-);
-
-CREATE TABLE IF NOT EXISTS maintenance_tasks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    product_id INTEGER NOT NULL,
-    task TEXT NOT NULL,
-    frequency_per_month REAL NOT NULL,
-    minutes_per_task REAL NOT NULL,
-    FOREIGN KEY (product_id) REFERENCES products(id)
-);
 
 CREATE TABLE IF NOT EXISTS product_selections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -117,7 +82,18 @@ def init_db(config: Config | None = None) -> None:
     conn = get_connection(config)
     try:
         conn.executescript(_SCHEMA_SQL)
+        # Migrate old unique index (name, brand) -> (name, brand, category)
+        _migrate_unique_index(conn)
         conn.commit()
         logger.info("Database schema initialized at %s", config or Config())
     finally:
         conn.close()
+
+
+def _migrate_unique_index(conn: sqlite3.Connection) -> None:
+    """Migrate products unique index to include category (v2)."""
+    try:
+        conn.execute("DROP INDEX IF EXISTS idx_products_name_brand")
+        conn.commit()
+    except Exception as e:
+        logger.debug("Index migration note: %s", e)

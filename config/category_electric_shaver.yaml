@@ -1,0 +1,23 @@
+name: "전기면도기"
+search_terms: ["전기면도기"]
+danawa_category_code: ""
+
+negative_keywords: ["불만", "후회", "실망", "반품", "고장", "AS", "수리", "오류", "면도독", "피부트러블"]
+positive_keywords: ["추천", "만족", "최고", "잘샀다", "좋아요", "강추", "밀착", "깔끔"]
+
+price_range:
+  min: 0
+  max: 10000000
+
+max_product_age_months: 18
+min_community_posts: 20
+
+# A2 소모품 정보
+consumables:
+  tco_tier: "recommended"
+  tco_label: "3년 칼날 포함 총비용"
+  items:
+    - name: "칼날+망 세트"
+      cycle: "12~24개월"
+    - name: "세척액 카트리지"
+      cycle: "2~3개월"

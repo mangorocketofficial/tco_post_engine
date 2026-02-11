@@ -60,13 +60,9 @@ def sample_product_data() -> dict:
 def sample_tco_data() -> dict:
     """Return sample TCO calculation data for testing."""
     return {
-        "purchase_price_avg": 1_490_000,
-        "purchase_price_min": 1_290_000,
-        "resale_value_1yr": 1_010_000,
-        "resale_value_2yr": 650_000,
-        "resale_value_3yr_plus": 450_000,
-        "expected_repair_cost": 180_000,
-        "real_cost_3yr": 1_020_000,  # 1_490_000 + 180_000 - 650_000
-        "as_turnaround_days": 7.5,
-        "monthly_maintenance_minutes": 25,
+        "purchase_price": 1_490_000,
+        "annual_consumable_cost": 60_000,
+        "consumable_cost_total": 180_000,
+        "real_cost_total": 1_670_000,  # 1_490_000 + (60_000 × 3) = 1_670_000
+        "tco_years": 3,
     }

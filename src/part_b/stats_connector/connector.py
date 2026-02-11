@@ -199,10 +199,10 @@ class StatsConnector:
 
         return SectionPerformance(
             section_0_bounce_rate=metrics.bounce_rate,
-            section_2_scroll_depth=metrics.scroll_depth_avg,
-            section_3_cta_click_rate=cta_click_rate,
-            section_4_time_on_section=metrics.avg_time_on_page * 0.3,  # Estimate
-            section_6_exit_rate=0.0,  # Requires detailed analytics
+            section_1_scroll_depth=metrics.scroll_depth_avg,
+            section_2_cta_click_rate=cta_click_rate,
+            section_3_time_on_section=metrics.avg_time_on_page * 0.3,  # Estimate
+            section_5_exit_rate=0.0,  # Requires detailed analytics
         )
 
     # --- Dashboard Integration ---

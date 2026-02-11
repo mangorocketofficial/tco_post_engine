@@ -136,31 +136,6 @@ class PricePosition:
 
 
 @dataclass
-class ResaleQuickCheck:
-    """Quick resale ratio check from Danggeun listings."""
-
-    product_name: str
-    avg_used_price: int
-    avg_new_price: int
-    sample_count: int
-
-    @property
-    def resale_ratio(self) -> float:
-        if self.avg_new_price <= 0:
-            return 0.0
-        return self.avg_used_price / self.avg_new_price
-
-    def to_dict(self) -> dict:
-        return {
-            "product_name": self.product_name,
-            "avg_used_price": self.avg_used_price,
-            "avg_new_price": self.avg_new_price,
-            "sample_count": self.sample_count,
-            "resale_ratio": round(self.resale_ratio, 3),
-        }
-
-
-@dataclass
 class KeywordMetrics:
     """Naver Search Ad keyword metrics for a product."""
 
@@ -268,6 +243,7 @@ class SelectedProduct:
     candidate: CandidateProduct
     scores: ProductScores
     selection_reasons: list[str] = field(default_factory=list)
+    slot: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -275,6 +251,7 @@ class SelectedProduct:
             "name": self.candidate.name,
             "brand": self.candidate.brand,
             "price": self.candidate.price,
+            "slot": self.slot,
             "selection_reasons": self.selection_reasons,
             "scores": self.scores.to_dict(),
         }
@@ -307,8 +284,13 @@ class SelectionResult:
     selected_products: list[SelectedProduct]
     validation: list[ValidationResult]
 
+    # Tier selection metadata
+    selected_tier: str = ""  # "premium" | "mid" | "budget"
+    tier_scores: dict[str, float] = field(default_factory=dict)
+    tier_product_counts: dict[str, int] = field(default_factory=dict)
+
     def to_dict(self) -> dict:
-        return {
+        d = {
             "category": self.category,
             "selection_date": self.selection_date.isoformat(),
             "data_sources": self.data_sources,
@@ -319,6 +301,13 @@ class SelectionResult:
                 for v in self.validation
             },
         }
+        if self.selected_tier:
+            d["selected_tier"] = self.selected_tier
+            d["tier_scores"] = {
+                k: round(v, 3) for k, v in self.tier_scores.items()
+            }
+            d["tier_product_counts"] = self.tier_product_counts
+        return d
 
     def to_json(self) -> str:
         """Serialize to JSON string."""
@@ -394,31 +383,24 @@ class RecommendationResult:
 
 
 # ---------------------------------------------------------------------------
-# Final merged selection models (A-0 + A-0.1)
+# Final selection models (A-0 TOP 3)
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class FinalProduct:
-    """A product in the final merged Top 3 selection."""
+    """A product in the final Top 3 selection."""
 
     rank: int  # 1, 2, 3
     name: str
     brand: str
     price: int
-    source: str  # "a0" | "a0.1" | "both"
+    source: str  # "a0"
     selection_reasons: list[str] = field(default_factory=list)
 
-    # A-0 data (if available)
+    # A-0 data
     a0_rank: int | None = None
     a0_scores: ProductScores | None = None
-
-    # A-0.1 data (if available)
-    recommendation_mention_count: int | None = None
-    recommendation_normalized_name: str = ""
-
-    # Match info
-    match_method: str = "none"  # "model_code" | "substring" | "none"
 
     def to_dict(self) -> dict:
         return {
@@ -430,40 +412,36 @@ class FinalProduct:
             "selection_reasons": self.selection_reasons,
             "a0_rank": self.a0_rank,
             "a0_scores": self.a0_scores.to_dict() if self.a0_scores else None,
-            "recommendation_mention_count": self.recommendation_mention_count,
-            "recommendation_normalized_name": self.recommendation_normalized_name,
-            "match_method": self.match_method,
         }
 
 
 @dataclass
 class FinalSelectionResult:
-    """The complete output of the final merged selection pipeline."""
+    """The complete output of the A-0 selection pipeline."""
 
     category: str
     selection_date: date
-    merge_case: str  # "default" | "overlap_1" | "overlap_2"
+    merge_case: str  # "a0_only"
     a0_result: SelectionResult
-    a0_1_result: RecommendationResult
     final_products: list[FinalProduct]
-    match_details: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "category": self.category,
             "selection_date": self.selection_date.isoformat(),
-            "merge_case": self.merge_case,
             "final_products": [p.to_dict() for p in self.final_products],
             "a0_summary": {
                 "candidate_pool_size": self.a0_result.candidate_pool_size,
                 "top_3": [sp.to_dict() for sp in self.a0_result.selected_products],
             },
-            "a0_1_summary": {
-                "total_blogs_searched": self.a0_1_result.total_blogs_searched,
-                "top_products": [p.to_dict() for p in self.a0_1_result.top_products],
-            },
-            "match_details": self.match_details,
         }
+        if self.a0_result.selected_tier:
+            d["selected_tier"] = self.a0_result.selected_tier
+            d["tier_scores"] = {
+                k: round(v, 3) for k, v in self.a0_result.tier_scores.items()
+            }
+            d["tier_product_counts"] = self.a0_result.tier_product_counts
+        return d
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2, default=str)

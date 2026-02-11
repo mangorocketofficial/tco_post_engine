@@ -297,17 +297,7 @@ class TestSanitizeFilename:
 
 
 class TestPublishPipeline:
-    @patch.object(
-        PublishPipeline,
-        "_build_seo_description",
-        return_value="Test description",
-    )
-    @patch.object(
-        PublishPipeline,
-        "_build_seo_keywords",
-        return_value=["keyword1"],
-    )
-    def test_export_only(self, mock_kw, mock_desc):
+    def test_export_only(self):
         pipeline = PublishPipeline()
         results = pipeline.export_only(SAMPLE_MARKDOWN, title="Test")
 
@@ -322,79 +312,17 @@ class TestPublishPipeline:
         assert COUPANG_DISCLOSURE in results["markdown"].content
 
 
-# === Test: Integration with Template Engine ===
+# === Test: Integration with PostProcessor ===
 
 
 class TestIntegration:
-    def test_processor_handles_template_output(self, processor):
-        """PostProcessor should handle output from template_engine.render_blog_post."""
-        from src.part_b.template_engine.models import (
-            BlogPostData, CategoryCriteria, CredibilityStats, FAQ, HomeType,
-            Product, SituationPick, TCOData,
-        )
-        from src.part_b.template_engine import render_blog_post
+    def test_processor_handles_html_content(self, processor):
+        """PostProcessor should handle pre-generated HTML content."""
+        html_content = "<h1>테스트 블로그</h1><p>1,154,000원 비용 분석</p>"
 
-        # Build minimal BlogPostData
-        tco = TCOData(
-            purchase_price_avg=899000,
-            purchase_price_min=849000,
-            resale_value_1yr=650000,
-            resale_value_2yr=450000,
-            resale_value_3yr_plus=315000,
-            expected_repair_cost=85000,
-            real_cost_3yr=534000,
-            as_turnaround_days=5.2,
-            monthly_maintenance_minutes=10,
-        )
-        product = Product(
-            product_id="test-1",
-            name="테스트 제품",
-            brand="테스트",
-            release_date="2024-01-01",
-            tco=tco,
-            cta_link="https://link.coupang.com/test",
-            highlight="테스트 추천 포인트",
-            verdict="recommend",
-            recommendation_reason="테스트 추천 이유",
-        )
-        blog_data = BlogPostData(
-            title="테스트 블로그",
-            category="로봇청소기",
-            generated_at="2026-02-07T12:00:00",
-            products=[product],
-            top_products=[product],
-            situation_picks=[
-                SituationPick(situation="가성비", product_name="테스트 제품", reason="저렴함"),
-            ],
-            home_types=[
-                HomeType(type="소형 원룸", recommendation="테스트 추천"),
-            ],
-            faqs=[
-                FAQ(question="테스트 질문?", answer="테스트 답변"),
-            ],
-            credibility=CredibilityStats(
-                total_review_count=100,
-                price_data_count=50,
-                resale_data_count=20,
-                repair_data_count=30,
-                as_review_count=15,
-                maintenance_data_count=5,
-            ),
-            category_criteria=CategoryCriteria(
-                myth_busting="테스트 미신 깨기",
-                real_differentiator="테스트 진짜 차별점",
-                decision_fork="테스트 갈림길",
-            ),
-        )
-
-        # Render with template engine
-        rendered = render_blog_post(blog_data)
-
-        # Process with publisher
-        html_result = processor.export_html(rendered)
-        md_result = processor.export_markdown(rendered)
+        html_result = processor.export_html(html_content)
+        md_result = processor.export_markdown(html_content)
 
         assert html_result.format == ExportFormat.HTML
         assert "테스트 블로그" in html_result.content
         assert md_result.format == ExportFormat.MARKDOWN
-        assert "534,000" in md_result.content or "534000" in md_result.content

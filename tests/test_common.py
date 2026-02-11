@@ -8,17 +8,11 @@ from pathlib import Path
 import pytest
 
 from src.common.models import (
-    FailureTypeStat,
-    MaintenanceTask,
+    ConsumableItem,
     PriceRecord,
     PriceSource,
     Product,
     ProductTCOExport,
-    RepairReport,
-    RepairStats,
-    ResaleCurve,
-    ResaleTransaction,
-    Sentiment,
     TCOCategoryExport,
     TCOSummary,
 )
@@ -68,24 +62,28 @@ class TestPriceRecord:
 class TestTCOSummary:
     def test_create_tco_summary(self, sample_tco_data: dict):
         tco = TCOSummary(**sample_tco_data)
-        assert tco.real_cost_3yr == 1_020_000
-        assert tco.as_turnaround_days == 7.5
+        assert tco.real_cost_total == 1_670_000
+        assert tco.annual_consumable_cost == 60_000
 
     def test_tco_formula(self, sample_tco_data: dict):
         tco = TCOSummary(**sample_tco_data)
-        expected = tco.purchase_price_avg + tco.expected_repair_cost - tco.resale_value_2yr
-        assert tco.real_cost_3yr == expected
+        expected = tco.purchase_price + (tco.annual_consumable_cost * 3)
+        assert tco.real_cost_total == expected
 
 
-class TestMaintenanceTask:
-    def test_total_monthly_minutes(self):
-        task = MaintenanceTask(
-            product_id="test",
-            task="먼지통 비우기",
-            frequency_per_month=8,
-            minutes_per_task=2,
+class TestConsumableItem:
+    def test_create_consumable_item(self):
+        item = ConsumableItem(
+            name="HEPA필터",
+            unit_price=15000,
+            replacement_cycle_months=6,
+            changes_per_year=2,
+            annual_cost=30000,
+            compatible_available=True,
+            compatible_price=8000,
         )
-        assert task.total_monthly_minutes == 16.0
+        assert item.annual_cost == 30000
+        assert item.compatible_available is True
 
 
 class TestTCOCategoryExport:
@@ -105,7 +103,7 @@ class TestTCOCategoryExport:
         )
         assert export.category == "로봇청소기"
         assert len(export.products) == 1
-        assert export.products[0].tco.real_cost_3yr == 1_020_000
+        assert export.products[0].tco.real_cost_total == 1_670_000
 
     def test_export_serialization(self, sample_product_data: dict, sample_tco_data: dict):
         export = TCOCategoryExport(
@@ -123,7 +121,7 @@ class TestTCOCategoryExport:
         )
         json_str = export.model_dump_json(indent=2)
         assert "로봇청소기" in json_str
-        assert "1020000" in json_str
+        assert "1670000" in json_str
 
 
 class TestDatabase:
@@ -138,10 +136,6 @@ class TestDatabase:
             tables = [row["name"] for row in cursor.fetchall()]
             assert "products" in tables
             assert "prices" in tables
-            assert "resale_transactions" in tables
-            assert "repair_reports" in tables
-            assert "maintenance_tasks" in tables
-            assert "tco_summaries" in tables
         finally:
             conn.close()
 

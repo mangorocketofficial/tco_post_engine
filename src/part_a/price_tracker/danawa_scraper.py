@@ -11,9 +11,11 @@ All raw HTML is cached for audit via HTTPClient.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import json
+import statistics
 from datetime import date, datetime
 from urllib.parse import quote
 
@@ -63,7 +65,8 @@ class DanawaScraper:
             "module": "goods",
             "act": "dispMain",
         }
-        cache_key = f"danawa_search_{quote(keyword)}"
+        kw_hash = hashlib.md5(keyword.encode()).hexdigest()[:12]
+        cache_key = f"danawa_search_{kw_hash}"
 
         resp = self._client.get(self.SEARCH_URL, params=params, cache_key=cache_key)
         soup = BeautifulSoup(resp.text, "lxml")
@@ -107,7 +110,7 @@ class DanawaScraper:
             item.select_one("span.goods-list__title")
             or item.select_one(".prod_name a, .prod_name p")
         )
-        name = name_el.get_text(strip=True) if name_el else ""
+        name = clean_product_name(name_el.get_text(strip=True)) if name_el else ""
 
         brand_el = item.select_one(".maker, .brand")
         brand = brand_el.get_text(strip=True) if brand_el else ""
@@ -150,7 +153,8 @@ class DanawaScraper:
             soup.select_one(".top-summary .text__title")
             or soup.select_one(".prod_tit, #blog_content .tit")
         )
-        product_name = title_el.get_text(strip=True) if title_el else f"product_{product_code}"
+        raw_name = title_el.get_text(strip=True) if title_el else f"product_{product_code}"
+        product_name = clean_product_name(raw_name)
 
         # Strategy 1: Mall price list rows
         # Current: div.price_row_type1 with div.sell-price
@@ -232,6 +236,16 @@ class DanawaScraper:
                         )
                     )
                     break  # just need one fallback price
+
+        # Layer 2: IQR-based outlier removal
+        before_count = len(records)
+        records = filter_prices_iqr(records)
+        removed = before_count - len(records)
+        if removed:
+            logger.info(
+                "IQR filter removed %d/%d records for product %s",
+                removed, before_count, product_code,
+            )
 
         logger.info(
             "Found %d price records for product %s", len(records), product_code
@@ -381,17 +395,26 @@ class DanawaScraper:
         )
         return cursor.lastrowid  # type: ignore[return-value]
 
+    # Minimum valid product price in KRW.  Values below this threshold are
+    # always parsing artifacts (shipping fees, coupon %, badge counts, etc.).
+    MIN_PRICE_FLOOR = 1_000
+
     @staticmethod
     def _parse_price(text: str) -> int:
         """Extract numeric price from Korean price text.
 
         Handles formats like '1,234,000원', '614,740원(657몰)', '369,000원~'.
         Truncates at '원' or '~' to avoid capturing trailing numbers like '(657몰)'.
+
+        Returns 0 for values below MIN_PRICE_FLOOR (Layer 1 absolute floor filter).
         """
         # Cut at '원', '~', or '(' to isolate the price portion
         price_part = re.split(r"[원~(]", text)[0]
         digits = re.sub(r"[^\d]", "", price_part)
-        return int(digits) if digits else 0
+        value = int(digits) if digits else 0
+        if value < DanawaScraper.MIN_PRICE_FLOOR:
+            return 0
+        return value
 
     @staticmethod
     def _parse_date(text: str) -> date | None:
@@ -411,3 +434,101 @@ class DanawaScraper:
 
     def __exit__(self, *args: object) -> None:
         self.close()
+
+
+# ---------------------------------------------------------------------------
+# Module-level utility functions
+# ---------------------------------------------------------------------------
+
+# Danawa UI text fragments that leak into product names via get_text().
+_NAME_JUNK_PATTERNS = re.compile(
+    r"VS검색하기|VS검색 도움말|추천상품과스펙비교하세요|"
+    r"스펙비교하세요|"
+    r"\(일반구매\)|\(공식판매\)|"
+    r"닫기$|\.닫기$"
+)
+
+
+def clean_product_name(name: str) -> str:
+    """Strip known Danawa UI artifacts from a product name."""
+    cleaned = _NAME_JUNK_PATTERNS.sub("", name)
+    # Collapse multiple spaces / trim dots at boundaries
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" .")
+    return cleaned
+
+
+def filter_prices_iqr(records: list[PriceRecord]) -> list[PriceRecord]:
+    """Layer 2: Remove statistical outliers using IQR on a single-product price list.
+
+    If fewer than 4 records, IQR is unreliable — return all records unchanged.
+    """
+    if len(records) < 4:
+        return records
+
+    prices = sorted(r.price for r in records)
+    n = len(prices)
+    q1 = prices[n // 4]
+    q3 = prices[(3 * n) // 4]
+    iqr = q3 - q1
+    lower = q1 - 1.5 * iqr
+    upper = q3 + 1.5 * iqr
+
+    return [r for r in records if lower <= r.price <= upper]
+
+
+def filter_prices_a0_reference(
+    records: list[PriceRecord],
+    reference_price: int,
+) -> list[PriceRecord]:
+    """Layer 3: Discard prices far from the A0 reference price.
+
+    Keeps prices within [reference × 0.3, reference × 3.0].
+    If reference_price is 0 or None, skip filtering (A0.1 blog-only product).
+    """
+    if not reference_price:
+        return records
+    low = reference_price * 0.3
+    high = reference_price * 3.0
+    return [r for r in records if low <= r.price <= high]
+
+
+def compute_name_similarity(name_a: str, name_b: str) -> float:
+    """Similarity between two product names.
+
+    Uses two strategies and returns the higher score:
+    1. Token-overlap (space-split) — works when both names have spaces.
+    2. Bidirectional substring containment — handles Danawa names with no
+       spaces (e.g. "필립스SkinIQ7000시리즈S7886/70").  Checks A-tokens in
+       B-flat AND B-tokens in A-flat, returns the best result.
+
+    Returns a float in [0, 1].
+    """
+    if not name_a or not name_b:
+        return 0.0
+
+    a_lower = name_a.lower()
+    b_lower = name_b.lower()
+
+    tokens_a = set(a_lower.split())
+    tokens_b = set(b_lower.split())
+
+    # Strategy 1: token overlap
+    token_score = 0.0
+    if tokens_a and tokens_b:
+        overlap = len(tokens_a & tokens_b)
+        token_score = overlap / min(len(tokens_a), len(tokens_b))
+
+    # Strategy 2: bidirectional substring containment
+    a_flat = a_lower.replace(" ", "").replace(",", "")
+    b_flat = b_lower.replace(" ", "").replace(",", "")
+
+    def _substr_ratio(tokens: set[str], target_flat: str) -> float:
+        if not tokens:
+            return 0.0
+        found = sum(1 for t in tokens if t in target_flat)
+        return found / len(tokens)
+
+    substr_a_in_b = _substr_ratio(tokens_a, b_flat)  # A0 tokens → Danawa text
+    substr_b_in_a = _substr_ratio(tokens_b, a_flat)  # Danawa tokens → A0 text
+
+    return max(token_score, substr_a_in_b, substr_b_in_a)

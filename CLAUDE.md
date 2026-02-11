@@ -6,10 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 TCO-Driven Affiliate Marketing Automation System — collects real TCO (Total Cost of Ownership) data from Korean e-commerce platforms/communities and generates affiliate blog posts grounded in actual cost analysis.
 
-**Core formula:** `Real Cost (3yr) = Purchase Price + Expected Repair Cost − Resale Value`
+**Core formula:** `Real Cost = Purchase Price + (Annual Consumable Cost × tco_years)` (tech=3yr, pet=2yr)
 
-- **Part A (Data Engine):** Scrapes pricing, resale, repair data → processes into structured TCO metrics
-- **Part B (Content Engine):** Takes TCO data → generates Korean affiliate blog posts via LLM
+- **Part A (Data Engine):** Product selection (A0), consumable pricing (A2 WebSearch), review insights (A5 WebSearch) → TCO calculation (A4) → JSON export
+- **Part B (Content Engine):** Takes TCO data → generates Korean affiliate blog posts via Claude Code (direct HTML)
 
 ## Build & Run Commands
 
@@ -18,7 +18,7 @@ TCO-Driven Affiliate Marketing Automation System — collects real TCO (Total Co
 pip install -r requirements.txt
 
 # Run tests (pytest configured in pyproject.toml with -v --tb=short)
-pytest tests/                              # All tests (257 passing)
+pytest tests/                              # All tests
 pytest tests/part_a/                       # Part A tests only
 pytest tests/part_b/                       # Part B tests only
 pytest tests/integration/                  # Integration tests
@@ -26,17 +26,28 @@ pytest tests/part_a/test_price_tracker.py -v   # Single test file
 
 # Run individual modules
 python -m src.part_a.price_tracker.main
-python -m src.part_a.resale_tracker.main
-python -m src.part_a.repair_analyzer.main
-python -m src.part_a.tco_engine.main
-python -m src.part_b.content_writer.main --category "로봇청소기"
+python -m src.part_a.tco_engine.main --category "로봇청소기" --config config/category_robot_vacuum.yaml --a0-data {a0.json} --a2-data {a2.json} --output {output.json}
+# Part B content generation is now handled by Claude Code directly (no CLI entry point)
 ```
 
 ## Architecture & Data Flow
 
 ```
-Part A scrapers → SQLite DB → TCO calculator → JSON export → Part B content writer → Jinja2 render → Platform publish
+A0(Product Selection) → A2(Consumable WebSearch) → A5(Review WebSearch) → A4(TCO Calculator) → JSON export → Claude Code (Step B + Step C) → PostProcessor → Platform publish
 ```
+
+### Pipeline Steps
+
+| Step | Type | Description |
+|------|------|-------------|
+| A0 | Python module | Product selection from Naver Shopping/Danawa |
+| A-CTA | Manual | Affiliate link collection |
+| A2 | Claude Code WebSearch | Consumable price research per product |
+| A5 | Claude Code WebSearch | Review insights + AS reputation |
+| A4 | Python module | TCO calculation + JSON export |
+| B | Claude Code | Comparison blog post (HTML) |
+| C | Claude Code | Individual review posts (HTML) |
+| D | Python module | Post-processing + publish |
 
 ### Two Config Systems (Important)
 
@@ -48,50 +59,75 @@ Both load `.env` from project root via `python-dotenv`.
 
 ### Part A → Part B Contract
 
-The data boundary between Part A and Part B is a JSON file matching the schema in `.coordination/api-contract.json`. Part A exports `TCOCategoryExport` (defined in `src/common/models.py`), Part B consumes it.
+The data boundary between Part A and Part B is a JSON file. Part A exports via `TCOExporter.export_from_files()` → JSON file in `data/exports/` → Claude Code generates HTML directly → `PostProcessor` → publish.
 
-Key flow: `TCOCalculator.calculate_for_product()` → `TCOExporter.export_category()` → JSON file in `data/exports/` → `ContentWriter.generate(tco_data_path=...)` → `BlogPostData` → `TemplateRenderer.render()` → markdown → `PostProcessor` → HTML/publish.
+Key flow: `TCOCalculator.calculate_from_files(a0_path, a2_path, tco_years=N)` → `TCOExporter.export_from_files()` → JSON
 
 ### Dual Model Layers
 
 Data models are defined in **two places** for historical reasons:
-- `src/common/models.py` — Pydantic models (Part A data types + API contract types like `ProductTCOExport`, `TCOCategoryExport`)
-- `src/part_b/template_engine/models.py` — `@dataclass` models for template rendering (`BlogPostData`, `Product`, `TCOData`)
-
-The `ContentWriter` bridges these: it reads Part A's JSON export and builds Part B's `@dataclass` objects.
+- `src/common/models.py` — Pydantic models (Part A data types + API contract types like `ProductTCOExport`, `TCOCategoryExport`, `ConsumableItem`)
+- `src/part_b/template_engine/models.py` — `@dataclass` models for blog post data structure (`BlogPostData`, `Product`, `TCOData`, `ConsumableItem`)
 
 ### Database
 
-SQLite with WAL mode and foreign keys enabled. Schema defined in `src/part_a/database/connection.py`. Tables: `products`, `prices`, `resale_transactions`, `repair_reports`, `maintenance_tasks`, `tco_summaries`. Products use auto-increment integer IDs internally, string IDs in exports.
+SQLite with WAL mode and foreign keys enabled. Schema defined in `src/part_a/database/connection.py`. Tables: `products`, `prices`, `product_selections`. Products use auto-increment integer IDs internally, string IDs in exports. Unique constraint on `(name, brand, category)` — supports same product names across different categories.
 
 ### Scraping Infrastructure
 
 All scrapers use `src/part_a/common/http_client.py` (`HTTPClient`) which provides rate limiting (token bucket), proxy rotation, retry with backoff, User-Agent rotation, and raw HTML caching under `data/raw_html/`.
 
-### Blog Template Structure
+### Blog Section Structure
 
-Jinja2 templates in `src/part_b/template_engine/templates/` — 7 section templates (`section_0_hook` through `section_6_faq`) composed by `blog_post.jinja2`. Each section maps to the 6-section blog format (hook → credibility → criteria → quick pick → TCO deep dive → action trigger → FAQ).
+**Step B (비교 글):** 6-section blog format (Section 0–5): hook+credibility → criteria → quick pick → TCO deep dive (소모품 비교표 포함) → checklist → FAQ. HTML is generated directly by Claude Code — no Jinja2 templates.
+
+**Step C (개별 리뷰):** 5-section format (Section 0–4): 한줄 결론 → 구매동기 분석 → 만족/불만 → AS 평판·소모품 관리 → 정리+내부 링크. 제품당 1개, CTA 없음 (SEO 서포트 글). Spec: `Spec stepC individualreview.md`
 
 ### Publishing Pipeline
 
-`PublishPipeline` in `src/part_b/publisher/pipeline.py` orchestrates the full flow: `ContentWriter` → CTA link injection → template render → `PostProcessor` (HTML/markdown export, SEO tags) → platform publish (Naver Blog, Tistory).
+`PublishPipeline` in `src/part_b/publisher/pipeline.py` accepts pre-generated HTML → `PostProcessor` (disclosure, SEO tags) → platform publish (Naver Blog, Tistory).
 
 ## Category Configuration
 
-Products are defined in YAML files under `config/` (e.g., `products_robot_vacuum.yaml`). Each category config includes product list, community keyword map for repair search, and maintenance task templates. The system is category-agnostic — swap the YAML to target a different appliance category.
+Category configs are YAML files under `config/` (e.g., `category_robot_vacuum.yaml`). Each config includes search terms, price range, keywords, consumable information, and multi-category metadata:
+
+```yaml
+# Multi-category fields (optional — defaults to tech)
+tco_years: 3               # tech=3, pet=2
+domain: "tech"              # "tech" | "pet"
+subscription_model: false   # GPS trackers, smart litter boxes
+multi_unit_label: null      # pet: "마리", tech: null
+
+consumables:
+  tco_tier: "essential"  # essential/recommended/optional/none
+  tco_label: "3년 소모품 포함 총비용"
+  items:
+    - name: "필터"
+      cycle: "3~6개월"
+```
+
+Two domains supported: **tech** (37 categories, 3yr TCO) and **pet** (20 categories, 2yr TCO). `Category consumables reference.md` and `Pet category consumables reference.md` provide the master references.
+
+### Multi-Blog Publishing (Supabase)
+
+Each domain publishes to a **separate Supabase project** (different Next.js blog site):
+- **tech:** `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` in `.env`
+- **pet:** `SUPABASE_PET_URL` + `SUPABASE_PET_SERVICE_KEY` in `.env`
+
+Domain is auto-detected from `config/category_*.yaml` → `domain` field → exported in TCO JSON → publisher routes to correct Supabase project. Can also be overridden via `--domain tech|pet` CLI flag.
 
 ## Key Design Rules
 
-- **GPT as narrator, not data source:** LLM generates narrative and tone; all numbers are injected from Part A. `ContentWriter` never fabricates quantitative data.
-- **CTA placement:** Exactly 1 CTA per product in Section 3, Section 4, and Section 5.
-- **Minimum data threshold:** 30 community posts before generating TCO for a product.
+- **Claude Code as narrator, not data source:** LLM generates narrative and tone; all numbers are injected from Part A. Never fabricate quantitative data.
+- **CTA placement:** Exactly 1 CTA per product in Section 2, Section 3, and Section 4.
 - **Raw HTML caching:** All scraped HTML is cached for audit; processed data goes to DB.
 - **Korean text:** All processing must handle UTF-8 encoding correctly.
+- **TCO formula is deterministic:** `real_cost_total = purchase_price + (annual_consumable_cost × tco_years)`. No probability-based estimates. `tco_years` comes from category YAML config.
 
 ## Test Fixtures
 
-- `fixtures/sample_tco_data.json` — Sample Part A export for testing the Part B pipeline
-- `fixtures/sample_blog_data.py` — Pre-built `BlogPostData` objects
+- `fixtures/sample_tco_data.json` — Sample Part A export (consumable-based) for testing the Part B pipeline
+- `fixtures/sample_blog_data.py` — Pre-built `BlogPostData` objects with consumable data
 - `tests/conftest.py` — Shared fixtures including `temp_db` (temporary SQLite), `db_conn`, `sample_product_data`, `sample_tco_data`
 
 ## Agent Team Development
