@@ -253,8 +253,8 @@ def _match_product_to_tco(
     best_count = 0
     for product in products:
         name = product.get("name", "")
-        name_words = [w for w in name.split() if len(w) >= 3]
-        matched_words = [w for w in name_words if w.lower() in title_lower]
+        name_words = [w.strip(".,;:!?()[]") for w in name.split() if len(w) >= 3]
+        matched_words = [w for w in name_words if w and w.lower() in title_lower]
         matches = len(matched_words)
         has_model = any(any(c.isdigit() for c in w) for w in matched_words)
         # A single model number match is sufficient (high specificity)
@@ -314,9 +314,37 @@ BRAND_MAP: dict[str, str] = {
     "닌자": "ninja",
     "SK매직": "sk-magic",
     "LG": "lg",
+    "LG전자": "lg",
     "펫킷": "petkit",
     "퍼릿": "purrit",
     "애구애구": "petkit",
+    "캐리어": "carrier",
+    "신일": "shinil",
+    "신일전자": "shinil",
+    "위니아": "winia",
+    "대웅": "daewung",
+    "쿠쿠홈시스": "cuckoo",
+    "딩동펫": "dingdongpet",
+    "도그아이": "dogeye",
+    "요기펫": "yogipet",
+    # Handy vacuum brands
+    "클래파": "clapa",
+    "자일렉": "zailex",
+    "바우아토": "bauato",
+    # Humidifier brands
+    "듀플렉스": "duplex",
+    "다룸": "daroom",
+    # Food waste processor brands
+    "미닉스": "minix",
+    "한일전기": "hanil",
+    "한일": "hanil",
+    # Auto feeder brands
+    "디클": "dicle",
+    "디클펫": "dicle",
+    # Cat water fountain / shared pet brands
+    "페키움": "petkium",
+    "펫케어": "petcare",
+    "닉센": "nixen",
 }
 
 
@@ -356,6 +384,8 @@ _MODEL_WORD_MAP: dict[str, str] = {
     # Pet product noise words
     "고양이": "", "화장실": "", "자동화장실": "", "자동": "",
     "배변통": "", "대형": "", "초대형": "", "프리미엄": "",
+    "강아지": "", "배변판": "", "배변매트": "", "논슬립": "", "애견": "",
+    "연장형": "", "토일렛": "toilet",
 }
 
 
@@ -866,12 +896,23 @@ class SupabasePublisher:
                 "ascii_slug": ascii_slug,
             })
 
+        # Build set of valid generated slugs for early-exit
+        valid_slugs = {comparison_ascii} | {
+            info["ascii_slug"] for info in product_slug_info
+        }
+
         for post in posts:
             content = post.content
 
             def _replace_link(match: re.Match) -> str:
                 slug_part = match.group(1)
                 slug_lower = slug_part.lower()
+
+                # Already a valid generated slug — no change needed
+                if slug_part in valid_slugs:
+                    return match.group(0)
+
+                # --- Korean slug resolution (legacy) ---
 
                 # Comparison link: contains 추천 or 비교 with category name
                 if "추천" in slug_part and "비교" in slug_part:
@@ -902,6 +943,36 @@ class SupabasePublisher:
                         brand_ascii = _brand_to_ascii(info["brand"])
                         if brand_ascii and brand_ascii in slug_lower:
                             return f"/posts/{info['ascii_slug']}"
+
+                # --- ASCII slug resolution ---
+                # Handles cases where Step B/C HTML already has ASCII slugs
+                # that don't match the generated slugs (e.g. LLM guessed
+                # "clapa-mini-review" but generator produces "clapa-mini-review")
+
+                # ASCII review link: {cat_slug}-...-review
+                if (slug_lower.startswith(cat_slug + "-")
+                        and slug_lower.endswith("-review")):
+                    # Try brand + model keyword match
+                    for info in product_slug_info:
+                        brand_ascii = _brand_to_ascii(info["brand"]) if info["brand"] else ""
+                        ma = info["model_ascii"]
+                        if brand_ascii and brand_ascii in slug_lower:
+                            if ma and ma in slug_lower:
+                                return f"/posts/{info['ascii_slug']}"
+                    # Try brand-only match (unique brand)
+                    for info in product_slug_info:
+                        brand_ascii = _brand_to_ascii(info["brand"]) if info["brand"] else ""
+                        if brand_ascii and brand_ascii in slug_lower:
+                            same_brand = [
+                                i for i in product_slug_info
+                                if i["brand"] and _brand_to_ascii(i["brand"]) == brand_ascii
+                            ]
+                            if len(same_brand) == 1:
+                                return f"/posts/{same_brand[0]['ascii_slug']}"
+
+                # ASCII comparison link
+                if slug_lower.startswith(cat_slug) and "best" in slug_lower:
+                    return f"/posts/{comparison_ascii}"
 
                 return match.group(0)  # No match — keep original
 
