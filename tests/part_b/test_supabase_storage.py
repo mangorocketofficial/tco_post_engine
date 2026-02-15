@@ -78,6 +78,22 @@ class TestCredentials:
         with pytest.raises(ValueError, match="SUPABASE_URL"):
             storage._get_client()
 
+    def test_baby_domain_uses_correct_env(self, monkeypatch):
+        monkeypatch.setenv("SUPABASE_BABY_URL", "http://baby.supabase.co")
+        monkeypatch.setenv("SUPABASE_BABY_SERVICE_KEY", "baby-key")
+
+        storage = SupabaseStorage(domain="baby")
+        assert storage._url == "http://baby.supabase.co"
+        assert storage._key == "baby-key"
+
+    def test_baby_domain_missing_url_raises(self, monkeypatch):
+        monkeypatch.delenv("SUPABASE_BABY_URL", raising=False)
+        monkeypatch.delenv("SUPABASE_BABY_SERVICE_KEY", raising=False)
+
+        storage = SupabaseStorage(supabase_url="", supabase_key="", domain="baby")
+        with pytest.raises(ValueError, match="SUPABASE_BABY_URL"):
+            storage._get_client()
+
 
 # --- Upload path rules ---
 

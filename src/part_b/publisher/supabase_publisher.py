@@ -253,7 +253,14 @@ def _match_product_to_tco(
     best_count = 0
     for product in products:
         name = product.get("name", "")
-        name_words = [w.strip(".,;:!?()[]") for w in name.split() if len(w) >= 3]
+        # Korean 2-char words (brands, materials) are meaningful; English needs ≥3
+        _has_korean = lambda s: any('\uac00' <= c <= '\ud7a3' for c in s)
+        # Tokenize on whitespace AND punctuation so "베이지(S3BOF)" → ["베이지", "S3BOF"]
+        name_tokens = re.findall(r'[가-힣a-zA-Z0-9]+', name)
+        name_words = [
+            w for w in name_tokens
+            if len(w) >= (2 if _has_korean(w) else 3)
+        ]
         matched_words = [w for w in name_words if w and w.lower() in title_lower]
         matches = len(matched_words)
         has_model = any(any(c.isdigit() for c in w) for w in matched_words)
@@ -341,10 +348,52 @@ BRAND_MAP: dict[str, str] = {
     # Auto feeder brands
     "디클": "dicle",
     "디클펫": "dicle",
+    # Dog food brands
+    "본아페티": "boneapety",
+    "닥터바이": "drby",
+    # Cat scratcher brands
+    "레토": "leto",
+    "펫펫펫": "petpetpet",
+    # Cat tower brands
+    "가르르": "garurr",
+    "그린웨일": "greenwhale",
+    # Dog stairs brands
+    "쁘리엘르": "ppurielr",
     # Cat water fountain / shared pet brands
     "페키움": "petkium",
     "펫케어": "petcare",
     "닉센": "nixen",
+    # Cat toy brands
+    "옥희독희": "okheedokhee",
+    "리스펫": "respet",
+    # Baby product brands
+    "베이비브레짜": "babybrezza",
+    "브라비": "bravi",
+    "누누": "nunu",
+    "매직캔": "magiccan",
+    "이지캔": "easycan",
+    "노시부": "nosiboo",
+    "유팡": "upang",
+    "레이퀸": "rayqueen",
+    "스펙트라": "spectra",
+    "메델라": "medela",
+    "베아바": "beaba",
+    "베이비무브": "babymove",
+    "필립스아벤트": "philips-avent",
+    "피죤": "pigeon",
+    "코모토모": "comotomo",
+    "스토케": "stokke",
+    "마마루": "mamaroo",
+    "안데스": "andes",
+    "오웰": "owlet",
+    "핌핀": "pimpin",
+    "코니": "konny",
+    "포그내": "pognae",
+    "에르고베이비": "ergobaby",
+    "버들맘마": "budlemamma",
+    "보나르떼": "bonarte",
+    "졸리점퍼": "jollyjumper",
+    "오큐러스": "ocurus",
 }
 
 
@@ -386,6 +435,23 @@ _MODEL_WORD_MAP: dict[str, str] = {
     "배변통": "", "대형": "", "초대형": "", "프리미엄": "",
     "강아지": "", "배변판": "", "배변매트": "", "논슬립": "", "애견": "",
     "연장형": "", "토일렛": "toilet",
+    # Cat scratcher model words
+    "사이잘삼": "sisal", "사이잘": "sisal", "원목": "wood", "수직": "vertical",
+    "침대": "bed", "스크래쳐": "", "특대형": "",
+    # Cat tower model words
+    "캣타워": "", "캣폴": "", "놀이터": "", "우주선": "",
+    "슈슈타워": "", "원형": "",
+    # Dog stairs model words
+    "강아지계단": "", "강아지": "", "계단": "", "퍼피": "puppy",
+    "극세사": "", "논슬립": "nonslip", "슬라이드": "slide",
+    "스텝": "", "2단": "2step",
+    # Dog food product model words
+    "스킨앤퍼케어": "skinandpercare", "슬림앤조인트케어": "slimandjointcare",
+    "리퀴드밀": "liquidmeal",
+    # Dog food noise words
+    "사료": "", "반습식": "", "소화기능": "", "저알러지": "",
+    "피부": "", "모질": "", "소프트": "",
+    "다이어트": "diet", "관절": "joint",
 }
 
 
@@ -420,10 +486,11 @@ def _extract_model_ascii(product_name: str, brand: str) -> str:
     parts = name.split("-")
     if not parts:
         return name
-    # Remove segments that are substrings of other segments
+    # Remove segments that are substrings of other segments (skip 1-char segments
+    # like "l" which can be meaningful model identifiers)
     filtered = [
         p for i, p in enumerate(parts)
-        if not any(p in other and p != other for j, other in enumerate(parts) if i != j)
+        if len(p) <= 1 or not any(p in other and p != other for j, other in enumerate(parts) if i != j)
     ]
     # Remove exact duplicates preserving order
     seen: set[str] = set()
@@ -458,12 +525,41 @@ def _resolve_category_slug(category: str) -> str:
 # SupabasePublisher
 # ---------------------------------------------------------------------------
 
+# Domain → Supabase environment variable mapping
+DOMAIN_ENV_MAP: dict[str, dict[str, str]] = {
+    "tech": {
+        "url_env": "SUPABASE_URL",
+        "url_env_alt": "NEXT_PUBLIC_SUPABASE_URL",
+        "key_env": "SUPABASE_SERVICE_KEY",
+        "key_env_alt": "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+        "label": "TECH",
+    },
+    "pet": {
+        "url_env": "SUPABASE_PET_URL",
+        "key_env": "SUPABASE_PET_SERVICE_KEY",
+        "label": "PET",
+    },
+    "baby": {
+        "url_env": "SUPABASE_BABY_URL",
+        "key_env": "SUPABASE_BABY_SERVICE_KEY",
+        "label": "BABY",
+    },
+}
+
+# Domain → blog tag mapping (tech has no special tag)
+DOMAIN_TAG_MAP: dict[str, str] = {
+    "pet": "반려동물",
+    "baby": "육아용품",
+}
+
+
 class SupabasePublisher:
     """Publishes TCO pipeline output to Supabase-backed blog.
 
-    Supports two Supabase projects (tech/pet) via domain-based routing:
+    Supports three Supabase projects (tech/pet/baby) via domain-based routing:
     - tech: SUPABASE_URL + SUPABASE_SERVICE_KEY
     - pet:  SUPABASE_PET_URL + SUPABASE_PET_SERVICE_KEY
+    - baby: SUPABASE_BABY_URL + SUPABASE_BABY_SERVICE_KEY
     """
 
     def __init__(
@@ -472,12 +568,17 @@ class SupabasePublisher:
         supabase_key: Optional[str] = None,
         domain: str = "tech",
     ):
-        if domain == "pet":
-            self._supabase_url = supabase_url or os.getenv("SUPABASE_PET_URL", "")
-            self._supabase_key = supabase_key or os.getenv("SUPABASE_PET_SERVICE_KEY", "")
-        else:
-            self._supabase_url = supabase_url or os.getenv("SUPABASE_URL", "") or os.getenv("NEXT_PUBLIC_SUPABASE_URL", "")
-            self._supabase_key = supabase_key or os.getenv("SUPABASE_SERVICE_KEY", "") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "")
+        env_cfg = DOMAIN_ENV_MAP.get(domain, DOMAIN_ENV_MAP["tech"])
+        self._supabase_url = (
+            supabase_url
+            or os.getenv(env_cfg["url_env"], "")
+            or os.getenv(env_cfg.get("url_env_alt", ""), "")
+        )
+        self._supabase_key = (
+            supabase_key
+            or os.getenv(env_cfg["key_env"], "")
+            or os.getenv(env_cfg.get("key_env_alt", ""), "")
+        )
         self._domain = domain
         self._client = None  # Lazy init
 
@@ -486,15 +587,10 @@ class SupabasePublisher:
         if self._client is not None:
             return self._client
         if not self._supabase_url or not self._supabase_key:
-            domain_label = "PET" if self._domain == "pet" else "TECH"
-            env_hint = (
-                "SUPABASE_PET_URL / SUPABASE_PET_SERVICE_KEY"
-                if self._domain == "pet"
-                else "SUPABASE_URL / SUPABASE_SERVICE_KEY"
-            )
+            env_cfg = DOMAIN_ENV_MAP.get(self._domain, DOMAIN_ENV_MAP["tech"])
             raise ValueError(
-                f"{domain_label} blog: {env_hint} must be set in .env. "
-                f"See config/.env.example."
+                f"{env_cfg['label']} blog: {env_cfg['url_env']} / {env_cfg['key_env']} "
+                f"must be set in .env. See config/.env.example."
             )
         from supabase import create_client
 
@@ -734,8 +830,9 @@ class SupabasePublisher:
         tags = [category, f"{category} 비교"] + brands
         if selected_tier in tier_label_map:
             tags.append(f"{category} {tier_label_map[selected_tier]}")
-        if domain == "pet":
-            tags.append("반려동물")
+        domain_tag = DOMAIN_TAG_MAP.get(domain)
+        if domain_tag:
+            tags.append(domain_tag)
         seo_keywords = [
             f"{category} 추천",
             f"{category} 비교",
@@ -793,8 +890,9 @@ class SupabasePublisher:
         tags = [category, f"{short_name} 리뷰"] + all_brands
         if selected_tier in tier_label_map:
             tags.append(f"{category} {tier_label_map[selected_tier]}")
-        if domain == "pet":
-            tags.append("반려동물")
+        domain_tag = DOMAIN_TAG_MAP.get(domain)
+        if domain_tag:
+            tags.append(domain_tag)
         seo_keywords = [
             f"{product_name} 리뷰",
             f"{product_name} 단점",
@@ -1146,9 +1244,9 @@ def main() -> None:
     parser.add_argument(
         "--domain",
         type=str,
-        choices=["tech", "pet"],
+        choices=["tech", "pet", "baby"],
         default=None,
-        help="Blog domain: 'tech' or 'pet'. Auto-detected from TCO JSON if omitted.",
+        help="Blog domain: 'tech', 'pet', or 'baby'. Auto-detected from TCO JSON if omitted.",
     )
     args = parser.parse_args()
 

@@ -1,0 +1,30 @@
+# Category config for A-0 Product Selector: Dog Food
+name: "개사료"
+search_terms: ["개사료", "강아지 사료", "반려견 사료"]
+danawa_category_code: ""
+
+# 멀티 카테고리 설정
+tco_years: 2
+domain: "pet"
+subscription_model: false
+multi_unit_label: "마리"
+
+negative_keywords: ["설사", "구토", "알러지", "거부", "안먹음", "배탈", "반품", "곰팡이", "벌레", "이물질"]
+positive_keywords: ["잘먹음", "추천", "윤기", "변상태", "기호성", "좋아요", "강추", "건강"]
+
+price_range:
+  min: 5000
+  max: 200000
+
+max_product_age_months: 24
+min_community_posts: 10
+
+# A2 소모품 정보
+# 개사료는 제품 자체가 반복 구매 소모품이므로, 월간 급여비를 소모품으로 산정
+# 중형견 10kg 기준 월 2~3kg 소비, 월 3~8만원
+consumables:
+  tco_tier: "essential"
+  tco_label: "2년 급여 비용 포함 총비용"
+  items:
+    - name: "사료 급여비 (중형견 10kg 기준)"
+      cycle: "1개월"

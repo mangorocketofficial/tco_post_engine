@@ -1,0 +1,29 @@
+name: "의류관리기"
+search_terms: ["의류관리기"]
+danawa_category_code: ""
+
+# 멀티 카테고리 설정
+tco_years: 3
+domain: "tech"
+subscription_model: false
+multi_unit_label: null
+
+negative_keywords: ["불만", "후회", "실망", "반품", "고장", "AS", "수리", "오류", "소음", "냄새"]
+positive_keywords: ["추천", "만족", "최고", "잘샀다", "좋아요", "강추", "편리", "깔끔"]
+
+price_range:
+  min: 200000
+  max: 3000000
+
+max_product_age_months: 24
+min_community_posts: 20
+
+# A2 소모품 정보
+consumables:
+  tco_tier: "recommended"
+  tco_label: "3년 필터 포함 총비용"
+  items:
+    - name: "미세먼지필터"
+      cycle: "6~12개월"
+    - name: "탈취필터"
+      cycle: "12~24개월"

@@ -9,7 +9,7 @@
 ## 파이프라인 전체 흐름
 
 ```
-A0 (제품 선정) → A-CTA (제휴링크 추출) → A-IMG (이미지 추출) → A2 (소모품 조사) → A5 (리뷰 분석) → A4 (TCO 계산) → B (비교 블로그) → C (개별 리뷰 ×3) → D (블로그 발행)
+A0 (제품 선정) → A-CTA (제휴링크 추출) → A-IMG (이미지 추출) → A-VERIFY (CTA/이미지 검증) → A2 (소모품 조사) → A5 (리뷰 분석) → A4 (TCO 계산) → B (비교 블로그) → C (개별 리뷰 ×3) → D (블로그 발행)
 ```
 
 > A0의 Naver Shopping `lprice`를 구매가 단일 소스로 사용한다. A1(다나와 가격 수집)은 파이프라인에서 제외되었다.
@@ -54,11 +54,11 @@ CATEGORY = "로봇청소기"                    # 카테고리 한글명
 KEYWORD  = "로봇청소기"                    # 검색 키워드
 CAT_SLUG = "robot_vacuum"                 # 카테고리 영문 슬러그 (파일명용)
 CONFIG   = "config/category_{CAT_SLUG}.yaml"  # 카테고리 설정 파일
-DOMAIN   = "tech"                          # "tech" | "pet" (config YAML의 domain 필드)
-TCO_YEARS = 3                              # config YAML의 tco_years (tech=3, pet=2)
+DOMAIN   = "tech"                          # "tech" | "pet" | "baby" (config YAML의 domain 필드)
+TCO_YEARS = 3                              # config YAML의 tco_years (tech=3, pet=2, baby=1~3)
 ```
 
-> **도메인별 기본값:** `domain: "tech"` → `tco_years: 3` / `domain: "pet"` → `tco_years: 2` (고가 펫 제품은 3년)
+> **도메인별 기본값:** `domain: "tech"` → `tco_years: 3` / `domain: "pet"` → `tco_years: 2` (고가 펫 제품은 3년) / `domain: "baby"` → `tco_years: 1~3` (카테고리별 사용 기간에 따라 차등)
 
 ### 슬러그 규칙 (내부 링크용) — ASCII-safe
 
@@ -109,8 +109,8 @@ search_terms: ["제습기"]                    # A0 Naver Shopping API 검색어
 danawa_category_code: ""                    # 비워둠 (사용하지 않음)
 
 # 멀티 카테고리 설정 (생략 시 tech 기본값)
-tco_years: 3                               # tech=3, pet=2
-domain: "tech"                             # "tech" | "pet"
+tco_years: 3                               # tech=3, pet=2, baby=1~3
+domain: "tech"                             # "tech" | "pet" | "baby"
 subscription_model: false                  # 구독형 소모품 여부
 multi_unit_label: null                     # pet: "마리", tech: null
 
@@ -136,6 +136,7 @@ consumables:
 ```
 
 > **반려동물 카테고리 예시:** `tco_years: 2`, `domain: "pet"`, `multi_unit_label: "마리"`, `tco_label: "2년 모래·소모품 포함 총비용"`
+> **육아용품 카테고리 예시:** `tco_years: 2`, `domain: "baby"`, `multi_unit_label: null`, `tco_label: "2년 리필 포함 총비용"`, `lock_in: true` (Baby_category_consumables_reference.md 참조)
 
 #### 2. consumables 섹션 채우기
 
@@ -290,8 +291,19 @@ python -m src.part_b.cta_manager.link_scraper --a0-data data/processed/a0_select
 
 - [ ] `data/processed/cta_links_{CATEGORY}.json` 생성 확인
 - [ ] 제품당 `success: true` + `base_url`에 `https://link.coupang.com/` 형태 링크 포함
-- [ ] 실패한 제품이 있으면 수동으로 링크 추가 가능 (JSON 직접 편집)
 - [ ] **Step B에서 사용:** 이 파일의 `base_url`이 블로그 CTA 버튼 링크로 들어간다
+
+### 실패 시 자동 교체 (쿠팡 미판매 제품)
+
+`success: false`인 제품이 있으면 A0 runner_up 후보에서 자동 교체한다:
+
+1. `data/processed/a0_selected_{CATEGORY}.json`의 `a0_summary.runner_ups` 확인
+2. 남은 2개 제품과 **브랜드가 겹치지 않는** 후보 중 점수(`scores.total_score`) 최고를 선택
+3. `a0_selected_{CATEGORY}.json`의 `final_products` 업데이트:
+   - 실패 제품 제거
+   - 교체 후보를 rank 3으로 추가 (name, brand, price, source, selection_reasons 포함)
+4. 교체된 제품에 대해 A-CTA 재실행 (전체 3개 제품)
+5. runner_ups에서 적합한 후보가 없으면 사용자에게 알림
 
 ### 트러블슈팅
 
@@ -328,6 +340,64 @@ python -m src.part_b.cta_manager.image_scraper --a0-data data/processed/a0_selec
 - [ ] 제품당 `images[]` 배열에 최소 1개 이미지 포함
 - [ ] `--upload` 사용 시 `public_url` 필드에 Supabase Storage URL 포함
 - [ ] 이미지 추출 실패 시 경고만 출력하고 파이프라인 계속 진행 (이미지는 필수가 아님)
+
+---
+
+## Step A-VERIFY: CTA 링크 및 이미지 검증 (Claude Code 멀티모달)
+
+> **CTA 링크와 이미지가 실제 의도한 제품과 일치하는지 Claude Code의 멀티모달 능력으로 검증한다.**
+> 쿠팡 파트너스의 검색 결과가 의도와 다른 제품을 반환하는 경우가 있으므로, 발행 전에 반드시 확인해야 한다.
+
+### 절차
+
+#### 1. 이미지 검증
+
+`data/processed/product_images_{CATEGORY}.json`에서 제품별 첫 번째 이미지를 시각적으로 확인한다.
+
+```bash
+# 제품별 대표 이미지를 임시 다운로드
+curl -L -o data/temp_verify_{product_id}.webp "{public_url}"
+```
+
+- Read 도구로 다운로드된 이미지 파일을 열어 시각적으로 확인
+- **판정 기준:**
+  - 이미지 내용이 해당 카테고리와 일치하는가? (예: 기저귀처리기 카테고리인데 도시락 이미지 → 불일치)
+  - 브랜드 로고나 제품명이 이미지에 보이면 A0 선정 제품과 대조
+- 3개 제품 모두 검증
+
+#### 2. CTA 링크 검증
+
+`data/processed/cta_links_{CATEGORY}.json`에서 제품별 `base_url`의 랜딩 페이지를 확인한다.
+
+- WebFetch로 `base_url` 접근 → 랜딩 페이지의 제품명/카테고리 추출
+- **판정 기준:**
+  - 랜딩 페이지 제품명에 브랜드명 또는 핵심 모델명 토큰이 포함되는가?
+  - 제품 카테고리가 일치하는가? (예: 쓰레기통/휴지통 vs 밀폐용기/도시락)
+- `link.coupang.com`은 리다이렉트되므로 최종 URL의 제품 페이지를 확인
+
+#### 3. 불일치 시 복구
+
+불일치가 발견된 제품에 대해:
+
+1. 검색어를 조정하여 해당 제품만 link_scraper 재실행
+   - 검색어 조정 전략: `브랜드 + 모델번호`, `브랜드 + 카테고리명`, `정확한 제품명`
+2. 새 CTA 링크로 해당 제품만 image_scraper 재실행
+3. A-VERIFY 재검증 수행
+4. 3회 시도 후에도 실패 시 → **runner_up 교체:**
+   - `a0_selected_{CATEGORY}.json`의 `a0_summary.runner_ups`에서 남은 2개 제품과 브랜드가 겹치지 않는 후보 선택
+   - `final_products` 업데이트 (실패 제품 제거 → 교체 후보 rank 3으로 추가)
+   - 교체 후보에 대해 A-CTA → A-IMG → A-VERIFY 재실행
+   - runner_ups에서도 적합한 후보가 없으면 사용자에게 수동 URL 입력 요청
+
+#### 4. 정리
+
+검증 완료 후 임시 이미지 파일(`data/temp_verify_*.webp`) 삭제.
+
+### 확인사항
+
+- [ ] 모든 제품(3개)의 대표 이미지가 실제 제품과 일치
+- [ ] 모든 CTA 링크의 랜딩 페이지가 의도한 제품을 가리킴
+- [ ] 불일치 제품이 있었다면 수정 완료 후 `cta_links_{CATEGORY}.json` 및 `product_images_{CATEGORY}.json` 업데이트 확인
 
 ---
 
@@ -768,6 +838,55 @@ CTA 제품명: "필립스 휴대용 면도기 소형 무선 남자 수염 전기
 
 ---
 
+### 비교 글 제목 작성 규칙
+
+비교 글(Step B)의 `<title>` 태그와 publisher가 DB에 삽입하는 title은 아래 프레임워크를 따른다. publisher는 `<title>` 태그에서 제목을 추출하므로, HTML `<head>`에 반드시 `<title>` 태그를 포함해야 한다.
+
+**공식:**
+```
+{검색키워드} 추천 {N}종 비교 — {후킹 요소} [{year}]
+```
+
+**구성 요소:**
+
+| 요소 | 규칙 | 예시 |
+|------|------|------|
+| 검색키워드 | YAML keyword를 실제 검색량 높은 자연어로 변환 | `개사료` → `강아지 사료`, `고양이정수기` → `고양이 정수기` |
+| N종 | A0에서 선정된 제품 수 (보통 3) | `3종 비교` |
+| 후킹 요소 | 아래 5가지 유형 중 데이터에 맞는 것 선택 | — |
+| [{year}] | 현재 연도 | `[2026]` |
+
+**후킹 요소 5가지 유형:**
+
+| 유형 | 템플릿 | 적합한 상황 |
+|------|--------|-------------|
+| 비용 충격 | "{TCO_YEARS}년 유지비만 {금액}?" | 소모품비가 구매가 초과하는 카테고리 (정수기, 공기청정기, 자동화장실) |
+| 비용 질문 | "{TCO_YEARS}년 총 {소모품 표현}는 얼마일까?" | 범용 (사료, 가전 모두) |
+| 절약 강조 | "호환품 쓰면 {금액} 아낀다" | 호환 소모품 있는 카테고리 (면도기, 칫솔, 공기청정기) |
+| 의외성 | "제일 비싼 게 제일 싸다?" | TCO 역전이 있는 경우 |
+| 선택 가이드 | "용도별 딱 맞는 제품은?" | 용도 분화 큰 카테고리 (청소기, 세탁기) |
+
+**검색키워드 변환 규칙:**
+- 한 단어 카테고리명은 자연어로 풀어서 "추천" 붙이기: `제습기` → `제습기 추천`
+- 복합/은어는 일반인 검색어로: `개사료` → `강아지 사료 추천`, `고양이정수기` → `고양이 정수기 추천`
+- "추천"은 제목 앞쪽에 배치 (검색 노출 최적화)
+
+**금지:**
+- `TCO`, `총소유비용` 같은 전문 용어 → `총 비용`, `유지비`, `실비용` 사용
+- 업계 은어 (`급여`, `급이` 등) → 일반인이 쓰는 표현으로
+- 제목에 키워드 3개 초과 삽입
+
+**예시:**
+```
+강아지 사료 추천 3종 비교 — 2년 총 사료비는 얼마일까? [2026]
+로봇청소기 추천 3종 비교 — 3년 필터값만 30만원? [2026]
+공기청정기 추천 3종 비교 — 호환 필터 쓰면 40만원 아낀다 [2026]
+전기면도기 추천 3종 비교 — 제일 비싼 게 제일 싸다? [2026]
+고양이 정수기 추천 3종 비교 — 2년 필터값은 얼마일까? [2026]
+```
+
+---
+
 ### 블로그 구조 (6 Sections)
 
 ```
@@ -1008,6 +1127,30 @@ Section 5: FAQ (본문 미포함 질문만, 소모품 + review 기반)
 
 **다두/다묘 변수:** `multi_unit_label: "마리"` 시 Section 4 체크리스트에 "반려동물 수에 따른 비용 변동" 항목을 추가한다. 단, 정량 곱셈은 하지 않는다 (개체별 사용량이 달라 신뢰도 낮음).
 
+#### `domain: "baby"` (육아용품)
+
+**역전 구조 훅:** 기저귀처리기 등 본체 대비 소모품비가 높은 카테고리(`tco_tier: essential`)에서 활용한다.
+```
+"본체 {purchase_price}만원, {tco_years}년 리필값 {consumable_cost_total}만원 — 진짜 비용은 {real_cost_total}만원"
+```
+
+**성장 졸업 훅:** 사용 기간이 아이 성장 단계에 따라 정해지는 카테고리. `usage_period` 참고하여 카테고리별 TCO 기간 차등 적용.
+```
+"기저귀 졸업까지 총비용 {real_cost_total}만원 — 본체값의 {배수}배"
+```
+
+**구독 경고:** `subscription_model: true` 카테고리 (베이비캠 클라우드 저장)는 Section 3에서 구독료 포함 TCO를 강조한다. 구독 해지 시 녹화·AI 알림 등 기능 상실 여부를 언급한다.
+
+**전용 부품 락인 경고:** `lock_in: true`인 카테고리 (분유제조기 깔때기/노즐, 기저귀처리기 리필)는 Section 3에서 "전용 부품만 사용 가능 — 호환품 사용 시 절감률 {N}%" 정보를 포함한다.
+
+**자녀 수 변수:** Section 4 체크리스트에 "1자녀 기준" 명시, 둘째 시 기기 재활용 가능 여부 안내. `multi_unit_label: null` (baby는 "마리" 변수 없음).
+
+**TCO 기간 (카테고리별 차등):**
+- 분유제조기: 1년 (분유 수유 기간)
+- 기저귀처리기/전동유축기: 2년
+- 콧물흡입기/유아 전동칫솔: 3년
+- 상세: `Baby_category_consumables_reference.md` 참조
+
 ---
 
 ### HTML 출력 요구사항
@@ -1110,6 +1253,13 @@ products[0] → 패턴 A: {제품명}, 사도 될까? — 리뷰 {N}건 분석 [
 products[1] → 패턴 B: {제품명} 장단점 총정리 — 실사용자 {N}건 분석 [{년도}]
 products[2] → 패턴 C: {제품명} {TCO_YEARS}년 쓰면 얼마? — 소모품비·유지비 분석 [{년도}]
 ```
+
+**제목 작성 공통 규칙 (비교 글과 동일):**
+- `TCO`, `총소유비용` 같은 전문 용어 사용 금지 → `총 비용`, `유지비`, `실비용`
+- 업계 은어 금지 → 일반인이 쓰는 자연스러운 표현 사용
+- `[{년도}]` 연도 태그 필수 (검색 최신성 시그널)
+- `<title>` 태그 + Schema.org `headline`에 동일 제목 삽입
+- meta description에도 제목과 연관된 핵심 수치 포함
 
 ### HTML 출력 요구사항
 

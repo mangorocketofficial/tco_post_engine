@@ -1,0 +1,30 @@
+# config/category_cat_scratcher.yaml
+# 리필형 고양이 스크래쳐 — 프레임 고정 + 골판지 교체형
+
+name: "고양이 스크래쳐"
+search_terms: ["고양이 스크래쳐", "리필형 스크래쳐", "고양이 스크래쳐 리필"]
+danawa_category_code: ""
+
+# 멀티 카테고리 설정
+tco_years: 2
+domain: "pet"
+subscription_model: false
+multi_unit_label: "마리"
+
+negative_keywords: ["불만", "후회", "실망", "반품", "고장", "파손", "가루", "먼지"]
+positive_keywords: ["추천", "만족", "최고", "잘샀다", "좋아요", "강추", "튼튼", "오래"]
+
+price_range:
+  min: 0
+  max: 500000
+
+max_product_age_months: 18
+min_community_posts: 20
+
+# A2 소모품 정보
+consumables:
+  tco_tier: "recommended"
+  tco_label: "2년 리필패드 포함 총비용"
+  items:
+    - name: "리필 골판지/스크래치패드"
+      cycle: "1~3개월"

@@ -35,10 +35,10 @@ class CategoryConfig:
     })
     maintenance_checklist: list[str] = field(default_factory=list)
     # Multi-category support
-    tco_years: int = 3                    # tech=3, pet=2
-    domain: str = "tech"                  # "tech" | "pet"
-    subscription_model: bool = False      # GPS tracker, auto litter box, etc.
-    multi_unit_label: str | None = None   # pet: "마리", tech: None
+    tco_years: int = 3                    # tech=3, pet=2, baby=1~3 (per category)
+    domain: str = "tech"                  # "tech" | "pet" | "baby"
+    subscription_model: bool = False      # GPS tracker, auto litter box, baby cam, etc.
+    multi_unit_label: str | None = None   # pet: "마리", tech/baby: None
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> CategoryConfig:

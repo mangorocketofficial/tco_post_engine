@@ -1,0 +1,27 @@
+# Category config for A-0 Product Selector: Diaper Pail (기저귀처리기)
+name: "diaper_pail"
+search_terms: ["기저귀처리기", "기저귀쓰레기통", "기저귀휴지통"]
+danawa_category_code: ""
+
+tco_years: 2
+domain: "baby"
+subscription_model: false
+multi_unit_label: null
+
+negative_keywords: ["냄새", "악취", "벌레", "리필비쌈", "뚜껑고장", "불량", "반품"]
+positive_keywords: ["냄새차단", "밀폐력", "추천", "편리", "위생적", "디자인", "만족"]
+
+price_range:
+  min: 10000
+  max: 200000
+
+max_product_age_months: 24
+min_community_posts: 15
+
+# A2 소모품 정보
+consumables:
+  tco_tier: "essential"
+  tco_label: "2년 리필 포함 총비용"
+  items:
+    - name: "전용 리필 봉투"
+      cycle: "2~4주"

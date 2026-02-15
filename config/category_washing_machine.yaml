@@ -1,0 +1,27 @@
+# Category config for A-0 Product Selector: Washing Machines (프리미엄)
+name: "washing_machine"
+search_terms: ["세탁기"]
+danawa_category_code: ""
+
+tco_years: 3
+domain: "tech"
+subscription_model: false
+multi_unit_label: null
+
+negative_keywords: ["불만", "후회", "실망", "반품", "고장", "AS", "수리", "오류", "소음", "진동"]
+positive_keywords: ["추천", "만족", "최고", "잘샀다", "좋아요", "강추", "조용", "깨끗"]
+
+price_range:
+  min: 500000
+  max: 3000000
+
+max_product_age_months: 18
+min_community_posts: 20
+
+# A2 소모품 정보
+consumables:
+  tco_tier: "optional"
+  tco_label: "3년 세탁조클리너 포함 총비용"
+  items:
+    - name: "세탁조클리너"
+      cycle: "1~2개월"

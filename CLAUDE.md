@@ -33,7 +33,7 @@ python -m src.part_a.tco_engine.main --category "로봇청소기" --config confi
 ## Architecture & Data Flow
 
 ```
-A0(Product Selection) → A2(Consumable WebSearch) → A5(Review WebSearch) → A4(TCO Calculator) → JSON export → Claude Code (Step B + Step C) → PostProcessor → Platform publish
+A0(Product Selection) → A-CTA(Affiliate Links) → A-IMG(Product Images) → A-VERIFY(CTA/Image Verification) → A2(Consumable WebSearch) → A5(Review WebSearch) → A4(TCO Calculator) → JSON export → Claude Code (Step B + Step C) → PostProcessor → Platform publish
 ```
 
 ### Pipeline Steps
@@ -41,7 +41,9 @@ A0(Product Selection) → A2(Consumable WebSearch) → A5(Review WebSearch) → 
 | Step | Type | Description |
 |------|------|-------------|
 | A0 | Python module | Product selection from Naver Shopping/Danawa |
-| A-CTA | Manual | Affiliate link collection |
+| A-CTA | Playwright | Affiliate link extraction from Coupang Partners |
+| A-IMG | Playwright | Product image extraction from Coupang |
+| A-VERIFY | Claude Code Multimodal | CTA link & image verification (visual + WebFetch) |
 | A2 | Claude Code WebSearch | Consumable price research per product |
 | A5 | Claude Code WebSearch | Review insights + AS reputation |
 | A4 | Python module | TCO calculation + JSON export |
@@ -93,8 +95,8 @@ Category configs are YAML files under `config/` (e.g., `category_robot_vacuum.ya
 
 ```yaml
 # Multi-category fields (optional — defaults to tech)
-tco_years: 3               # tech=3, pet=2
-domain: "tech"              # "tech" | "pet"
+tco_years: 3               # tech=3, pet=2, baby=1~3 (per category)
+domain: "tech"              # "tech" | "pet" | "baby"
 subscription_model: false   # GPS trackers, smart litter boxes
 multi_unit_label: null      # pet: "마리", tech: null
 
@@ -106,13 +108,14 @@ consumables:
       cycle: "3~6개월"
 ```
 
-Two domains supported: **tech** (37 categories, 3yr TCO) and **pet** (20 categories, 2yr TCO). `Category consumables reference.md` and `Pet category consumables reference.md` provide the master references.
+Three domains supported: **tech** (37 categories, 3yr TCO), **pet** (20 categories, 2yr TCO), and **baby** (21 categories, 1-3yr TCO). `Category consumables reference.md`, `Pet category consumables reference.md`, and `Baby_category_consumables_reference.md` provide the master references.
 
 ### Multi-Blog Publishing (Supabase)
 
 Each domain publishes to a **separate Supabase project** (different Next.js blog site):
 - **tech:** `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` in `.env`
 - **pet:** `SUPABASE_PET_URL` + `SUPABASE_PET_SERVICE_KEY` in `.env`
+- **baby:** `SUPABASE_BABY_URL` + `SUPABASE_BABY_SERVICE_KEY` in `.env`
 
 Domain is auto-detected from `config/category_*.yaml` → `domain` field → exported in TCO JSON → publisher routes to correct Supabase project. Can also be overridden via `--domain tech|pet` CLI flag.
 

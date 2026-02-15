@@ -1,0 +1,30 @@
+# Category config for A-0 Product Selector: Cat Litter
+name: "고양이모래"
+search_terms: ["고양이모래", "고양이 모래", "캣 리터"]
+danawa_category_code: ""
+
+# 멀티 카테고리 설정
+tco_years: 2
+domain: "pet"
+subscription_model: false
+multi_unit_label: "마리"
+
+negative_keywords: ["먼지", "냄새", "사막화", "곰팡이", "벌레", "안씀", "거부", "날림", "무거움", "응고안됨"]
+positive_keywords: ["응고력", "탈취", "가성비", "먼지없음", "추천", "잘써요", "냄새없음", "강추"]
+
+price_range:
+  min: 3000
+  max: 50000
+
+max_product_age_months: 24
+min_community_posts: 10
+
+# A2 소모품 정보
+# 고양이모래는 제품 자체가 반복 구매 소모품이므로, 월간 모래 비용을 소모품으로 산정
+# 1묘 기준 월 6~10kg 소비, 월 2~5만원
+consumables:
+  tco_tier: "essential"
+  tco_label: "2년 모래 비용 포함 총비용"
+  items:
+    - name: "모래 구매비 (1묘 기준)"
+      cycle: "1개월"

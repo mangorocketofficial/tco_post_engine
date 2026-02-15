@@ -1,0 +1,27 @@
+# Category config for A-0 Product Selector: Pet Potty Pad (강아지 배변판)
+name: "pet_potty_pad"
+search_terms: ["강아지 배변판", "반려견 배변판", "강아지 배변트레이"]
+danawa_category_code: ""
+
+tco_years: 2
+domain: "pet"
+subscription_model: false
+multi_unit_label: "마리"
+
+negative_keywords: ["냄새", "세척어려움", "미끄러움", "고장", "패드고정안됨", "반품", "뒤집음", "배변실패"]
+positive_keywords: ["세척쉬움", "고정력", "냄새없음", "추천", "깔끔", "배변성공", "강추", "미끄럼방지"]
+
+price_range:
+  min: 5000
+  max: 200000
+
+max_product_age_months: 24
+min_community_posts: 10
+
+# A2 소모품 정보
+consumables:
+  tco_tier: "essential"
+  tco_label: "2년 배변패드 포함 총비용"
+  items:
+    - name: "배변패드"
+      cycle: "매일 1~3장"

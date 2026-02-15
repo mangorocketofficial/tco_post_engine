@@ -1,0 +1,29 @@
+# Category config for A-0 Product Selector: Pet Deodorizer
+name: "pet_deodorizer"
+search_terms: ["펫 탈취기", "반려동물 탈취기", "펫 냄새제거기"]
+danawa_category_code: ""
+
+tco_years: 2
+domain: "pet"
+subscription_model: false
+multi_unit_label: "마리"
+
+negative_keywords: ["냄새", "소음", "고장", "효과없음", "오존냄새", "반품", "AS", "수리"]
+positive_keywords: ["탈취", "냄새제거", "조용", "추천", "효과좋음", "깔끔", "강추"]
+
+price_range:
+  min: 10000
+  max: 500000
+
+max_product_age_months: 24
+min_community_posts: 10
+
+# A2 소모품 정보
+consumables:
+  tco_tier: "recommended"
+  tco_label: "2년 필터 포함 총비용"
+  items:
+    - name: "탈취필터"
+      cycle: "3~6개월"
+    - name: "UV 램프"
+      cycle: "12개월"

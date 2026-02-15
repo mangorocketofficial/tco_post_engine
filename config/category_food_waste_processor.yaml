@@ -1,0 +1,30 @@
+# Category config for A-0 Product Selector: Food Waste Processor
+name: "음식물처리기"
+search_terms: ["음식물처리기"]
+danawa_category_code: ""
+
+# 멀티 카테고리 설정
+tco_years: 3
+domain: "tech"
+subscription_model: false
+multi_unit_label: null
+
+negative_keywords: ["불만", "후회", "실망", "반품", "고장", "AS", "수리", "오류", "냄새", "악취", "소음"]
+positive_keywords: ["추천", "만족", "최고", "잘샀다", "좋아요", "강추", "냄새없음", "편리"]
+
+price_range:
+  min: 100000
+  max: 1500000
+
+max_product_age_months: 18
+min_community_posts: 20
+
+# A2 소모품 정보
+consumables:
+  tco_tier: "essential"
+  tco_label: "3년 필터·소모품 포함 총비용"
+  items:
+    - name: "탈취필터"
+      cycle: "3~6개월"
+    - name: "미생물제제"
+      cycle: "6~12개월"

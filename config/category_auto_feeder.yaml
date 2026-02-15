@@ -1,0 +1,27 @@
+# Category config for A-0 Product Selector: Auto Pet Feeder
+name: "auto_feeder"
+search_terms: ["자동 급식기", "반려동물 자동급식기", "고양이 자동급식기"]
+danawa_category_code: ""
+
+tco_years: 2
+domain: "pet"
+subscription_model: false
+multi_unit_label: "마리"
+
+negative_keywords: ["고장", "소음", "막힘", "오류", "사료걸림", "불량", "배터리", "와이파이끊김"]
+positive_keywords: ["편리", "정확", "조용", "추천", "앱연동", "신선", "위생적"]
+
+price_range:
+  min: 20000
+  max: 500000
+
+max_product_age_months: 24
+min_community_posts: 15
+
+# A2 소모품 정보
+consumables:
+  tco_tier: "optional"
+  tco_label: "2년 건조제 포함 총비용"
+  items:
+    - name: "건조제/제습제"
+      cycle: "1~2개월"

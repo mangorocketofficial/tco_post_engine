@@ -1,0 +1,23 @@
+name: "강아지계단"
+search_terms: ["강아지계단", "강아지 계단", "반려견 계단", "펫 스텝"]
+danawa_category_code: ""
+
+tco_years: 2
+domain: "pet"
+subscription_model: false
+multi_unit_label: "마리"
+
+negative_keywords: ["불만", "후회", "실망", "반품", "고장", "AS", "수리", "오류"]
+positive_keywords: ["추천", "만족", "최고", "잘샀다", "좋아요", "강추"]
+
+price_range:
+  min: 0
+  max: 10000000
+
+max_product_age_months: 18
+min_community_posts: 20
+
+consumables:
+  tco_tier: "none"
+  tco_label: "구매가 비교"
+  items: []

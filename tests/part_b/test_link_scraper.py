@@ -7,6 +7,8 @@ import pytest
 
 from src.part_b.cta_manager.link_scraper import (
     CoupangLinkScraper,
+    _extract_product_id_from_final_url,
+    _build_search_query,
     _make_product_id,
     load_a0_products,
     save_results,
@@ -35,6 +37,32 @@ class TestMakeProductId:
     def test_single_word_name(self):
         pid = _make_product_id("면도기", "브랜드")
         assert "브랜드" in pid
+
+
+class TestBuildSearchQuery:
+    """Test compact query builder for Coupang partners search."""
+
+    def test_includes_brand_and_compacts_tokens(self):
+        q = _build_search_query(
+            "BrandX cordless mini vacuum lightweight portable compact",
+            "BrandX",
+        )
+        assert q.split()[0] == "BrandX"
+        assert len(q.split()) <= 4
+
+    def test_brandless_query_removes_brackets(self):
+        q = _build_search_query("[HighPower] mini vacuum 4in1", "")
+        assert q
+        assert "[" not in q
+
+
+class TestExtractProductIdFromFinalUrl:
+    def test_extracts_product_id(self):
+        url = "https://www.coupang.com/vp/products/5071254266?itemId=6862875958"
+        assert _extract_product_id_from_final_url(url) == "5071254266"
+
+    def test_returns_none_for_non_product_url(self):
+        assert _extract_product_id_from_final_url("https://www.coupang.com/") is None
 
 
 # --- A0 loading tests ---
@@ -76,6 +104,18 @@ class TestLoadA0Products:
 
         category, products = load_a0_products(path)
         assert category == "unknown"
+        assert len(products) == 1
+
+    def test_load_utf8_bom(self, tmp_path):
+        data = {
+            "category": "test",
+            "final_products": [{"name": "A", "brand": "B", "price": 1000}],
+        }
+        path = tmp_path / "a0_bom.json"
+        # utf-8-sig writes BOM
+        path.write_text(json.dumps(data), encoding="utf-8-sig")
+        category, products = load_a0_products(path)
+        assert category == "test"
         assert len(products) == 1
 
 

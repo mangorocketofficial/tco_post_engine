@@ -1,0 +1,23 @@
+name: "캣타워"
+search_terms: ["캣타워", "고양이 캣타워", "원목 캣타워"]
+danawa_category_code: ""
+
+tco_years: 2
+domain: "pet"
+subscription_model: false
+multi_unit_label: "마리"
+
+negative_keywords: ["불만", "후회", "실망", "반품", "고장", "AS", "수리", "오류", "냄새", "흔들림"]
+positive_keywords: ["추천", "만족", "최고", "잘샀다", "좋아요", "강추", "튼튼", "안정적"]
+
+price_range:
+  min: 30000
+  max: 500000
+
+max_product_age_months: 18
+min_community_posts: 20
+
+consumables:
+  tco_tier: "none"
+  tco_label: "구매가 비교"
+  items: []

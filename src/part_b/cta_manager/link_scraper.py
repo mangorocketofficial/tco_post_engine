@@ -26,6 +26,7 @@ import json
 import os
 import re
 import argparse
+from urllib.parse import urlparse
 from datetime import datetime
 from pathlib import Path
 
@@ -51,6 +52,61 @@ ACTION_TIMEOUT = 15_000
 SETTLE_DELAY = 2_000
 
 
+def _extract_product_id_from_final_url(final_url: str) -> str | None:
+    """Extract Coupang product id from final redirected product URL."""
+    if not final_url:
+        return None
+    m = re.search(r"/products/(\d+)", final_url)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _build_search_query(product_name: str, brand: str = "") -> str:
+    """Build a compact query using brand + model-focused tokens."""
+    raw = (product_name or "").strip()
+    brand = (brand or "").strip()
+    if not raw:
+        return brand
+
+    cleaned = re.sub(r"\[[^\]]+\]", " ", raw)
+    cleaned = re.sub(r"\([^)]*\)", " ", cleaned)
+
+    noise_tokens = {
+        "원룸", "자취방", "가벼운", "저렴한", "소형", "핸드", "핸디", "차량용",
+        "차량", "진공", "청소기", "무선", "미니", "가정용", "휴대용", "멀티", "초강력",
+        "강력", "흡입", "흡입력", "필터", "브러시", "헤드", "증정", "특가",
+    }
+
+    tokens = re.findall(r"[A-Za-z0-9\uAC00-\uD7A3]+", cleaned)
+    selected: list[str] = []
+
+    if brand:
+        selected.append(brand)
+
+    for token in tokens:
+        token = token.strip()
+        if not token:
+            continue
+        if token == brand:
+            continue
+        if token in noise_tokens:
+            continue
+        if len(token) == 1 and not any(ch.isdigit() for ch in token):
+            continue
+        selected.append(token)
+        if len(selected) >= (4 if brand else 3):
+            break
+
+    if brand and len(selected) == 1:
+        for fallback in tokens:
+            if fallback != brand and len(fallback) >= 2:
+                selected.append(fallback)
+                break
+
+    return " ".join(selected) if selected else raw
+
+
 class CoupangLinkScraper:
     """Scrapes affiliate links from Coupang Partners dashboard via Playwright.
 
@@ -73,6 +129,7 @@ class CoupangLinkScraper:
         self._playwright = None
         self._context: BrowserContext | None = None
         self._page: Page | None = None
+        self._last_validated_product_id: str | None = None
 
     # --- Lifecycle ---
 
@@ -273,7 +330,7 @@ class CoupangLinkScraper:
         except Exception:
             pass
 
-    async def _execute_search(self, product_name: str) -> bool:
+    async def _execute_search(self, query: str) -> bool:
         """Execute product search using multiple strategies.
 
         Returns True if search results loaded (검색결과 text found).
@@ -305,8 +362,8 @@ class CoupangLinkScraper:
             await self._scroll_into_view(search_input)
             await search_input.click(timeout=ACTION_TIMEOUT)
             await search_input.fill("")
-            await search_input.fill(product_name)
-            logger.info("Filled search term: %s", product_name[:40])
+            await search_input.fill(query)
+            logger.info("Filled search term: %s", query[:50])
             await page.wait_for_timeout(500)
         except Exception as e:
             logger.error("Search input not found: %s", e)
@@ -409,28 +466,50 @@ class CoupangLinkScraper:
             pass
         return False
 
-    async def generate_link(self, product_name: str, target_price: int | None = None) -> str | None:
+    async def generate_link(
+        self,
+        product_name: str,
+        brand: str = "",
+        target_price: int | None = None,
+    ) -> str | None:
         """Search for a product and generate its affiliate link.
 
         Args:
             product_name: Full product name from A0 selection.
-            target_price: Expected price (원) from A0 data for result matching.
+            brand: Expected brand from A0 selection.
+            target_price: Expected price for candidate matching.
 
         Returns:
             Affiliate URL string, or None on failure.
         """
         page = self._page
         await self.navigate_to_link_page()
+        self._last_validated_product_id = None
+
+        search_query = _build_search_query(product_name, brand)
+        logger.info(
+            "Search query built: '%s' (name='%s', brand='%s')",
+            search_query,
+            product_name[:40],
+            brand,
+        )
 
         # --- Step 1: Scroll to search area and execute search ---
         await self._scroll_down_by(pixels=300, steps=2)
         await page.wait_for_timeout(1000)
 
-        search_ok = await self._execute_search(product_name)
+        search_ok = await self._execute_search(search_query)
+        if not search_ok:
+            fallback_query = product_name.strip()
+            if brand and brand not in fallback_query:
+                fallback_query = f"{brand} {fallback_query}".strip()
+            if fallback_query and fallback_query != search_query:
+                logger.info("Retrying search with fallback query: %s", fallback_query[:60])
+                search_ok = await self._execute_search(fallback_query)
         await self._save_screenshot("after_search")
 
         if not search_ok:
-            logger.error("Search failed for: %s", product_name)
+            logger.error("Search failed for query: %s", search_query)
             await self._save_screenshot("search_fail")
             return None
 
@@ -440,10 +519,22 @@ class CoupangLinkScraper:
         await self._save_screenshot("search_results")
 
         # --- Step 3+4: Select product and generate link ---
-        affiliate_url = await self._select_product_and_generate(target_price=target_price)
+        affiliate_url = await self._select_product_and_generate(
+            target_price=target_price, product_name=product_name
+        )
 
         if affiliate_url:
-            logger.info("Generated link: %s", affiliate_url[:80])
+            is_valid, resolved_pid = await self._validate_affiliate_target(
+                affiliate_url,
+                product_name=product_name,
+                brand=brand,
+            )
+            if is_valid:
+                self._last_validated_product_id = resolved_pid
+                logger.info("Generated and validated link: %s", affiliate_url[:80])
+            else:
+                logger.error("Generated link failed product validation: %s", affiliate_url[:80])
+                return None
         else:
             logger.error("Failed to extract URL for: %s", product_name[:40])
             await self._save_screenshot("extract_fail")
@@ -520,18 +611,23 @@ class CoupangLinkScraper:
         logger.info("=== END DOM DUMP ===")
         return dom_info
 
-    async def _find_best_price_match(self, item_count: int, target_price: int) -> int:
-        """Find the product-item whose price is closest to target_price.
+    async def _find_best_price_match(
+        self, item_count: int, target_price: int, product_name: str = ""
+    ) -> int | None:
+        """Find the product-item best matching target_price AND product_name.
 
-        Extracts price text from each product-item, parses Korean won format
-        (e.g. "399,000원"), and returns the index of the best match.
+        Scoring: combines price proximity with name keyword matching.
+        Items containing the brand name and key model terms score higher.
         Only considers items within 30% of the target price.
         """
         import re as _re
         page = self._page
-        best_idx = 0
-        best_diff = float("inf")
-        MAX_ITEMS_TO_CHECK = min(item_count, 12)  # Don't check too many
+        best_idx: int | None = None
+        best_score = -1.0
+        MAX_ITEMS_TO_CHECK = min(item_count, 12)
+
+        # Extract brand and key terms from product name for matching
+        name_keywords = [w for w in product_name.split() if len(w) >= 2]
 
         for idx in range(MAX_ITEMS_TO_CHECK):
             try:
@@ -539,32 +635,52 @@ class CoupangLinkScraper:
                 text = await item.text_content(timeout=2000)
                 if not text:
                     continue
-                # Extract price: "399,000원" or "1,190,000원"
+                text_lower = text.lower()
+
+                # Price matching
                 prices = _re.findall(r'[\d,]+원', text)
+                price_match = False
+                price_diff_ratio = 1.0
                 for price_str in prices:
                     price_val = int(price_str.replace(',', '').replace('원', ''))
-                    if price_val < 1000:  # Skip percentages parsed as prices
+                    if price_val < 1000:
                         continue
                     diff = abs(price_val - target_price)
-                    # Within 30% tolerance
-                    if diff < best_diff and diff / target_price < 0.3:
-                        best_diff = diff
-                        best_idx = idx
-                        logger.info(
-                            "  item[%d] price %s원 (diff: %s원)",
-                            idx, f"{price_val:,}", f"{diff:,}",
-                        )
+                    ratio = diff / target_price
+                    if ratio < 0.3 and ratio < price_diff_ratio:
+                        price_diff_ratio = ratio
+                        price_match = True
+
+                if not price_match:
+                    continue
+
+                # Name matching: count keyword hits
+                name_hits = sum(1 for kw in name_keywords if kw.lower() in text_lower)
+                name_ratio = name_hits / max(len(name_keywords), 1)
+
+                # Combined score: name match (0-1) weighted more + price closeness (0-1)
+                score = name_ratio * 0.7 + (1.0 - price_diff_ratio) * 0.3
+                logger.info(
+                    "  item[%d] price_diff=%.1f%% name_hits=%d/%d score=%.3f",
+                    idx, price_diff_ratio * 100, name_hits, len(name_keywords), score,
+                )
+
+                if score > best_score:
+                    best_score = score
+                    best_idx = idx
             except Exception:
                 continue
 
         return best_idx
 
-    async def _select_product_and_generate(self, target_price: int | None = None) -> str | None:
+    async def _select_product_and_generate(
+        self, target_price: int | None = None, product_name: str = ""
+    ) -> str | None:
         """Click the '링크 생성' button inside the best-matching product-item.
 
         When target_price is provided, iterates through product-items to find
-        the one whose displayed price is closest to the expected A0 price.
-        Falls back to the first item if no price match is found.
+        the one whose price and name best match the expected A0 product.
+        Falls back to the first item if no match is found.
 
         DOM structure (from dump):
           DIV.product-list
@@ -579,20 +695,30 @@ class CoupangLinkScraper:
 
         item_count = await page.locator('.product-item').count()
         logger.info("Found %d product-item elements", item_count)
-
-        # --- Price matching: find the best product-item ---
-        best_idx = 0
+        # --- Price + name matching: find the best product-item ---
+        best_idx = None
         if target_price and item_count > 1:
-            best_idx = await self._find_best_price_match(item_count, target_price)
-            if best_idx != 0:
-                logger.info("Price match: selected item[%d] (target: %s원)", best_idx, f"{target_price:,}")
-
-        first_item = page.locator('.product-item').nth(best_idx)
+            best_idx = await self._find_best_price_match(
+                item_count, target_price, product_name=product_name
+            )
+            if best_idx is not None:
+                logger.info("Price match: selected item[%d] (target: %s KRW)", best_idx, f"{target_price:,}")
+            else:
+                logger.error("No reliable product-item match found (name/price mismatch)")
+                return None
+        elif item_count == 1:
+            best_idx = 0
 
         if item_count == 0:
             logger.error("No .product-item elements found")
             await self._save_screenshot("no_product_items")
             return None
+        if best_idx is None:
+            logger.error("Skipping link generation because product-item match is ambiguous")
+            await self._save_screenshot("ambiguous_product_match")
+            return None
+
+        first_item = page.locator('.product-item').nth(best_idx)
 
         # Scroll into view and hover to reveal hidden buttons
         await self._scroll_into_view(first_item)
@@ -850,6 +976,68 @@ class CoupangLinkScraper:
 
         return None
 
+    async def _validate_affiliate_target(
+        self,
+        affiliate_url: str,
+        product_name: str,
+        brand: str = "",
+    ) -> tuple[bool, str | None]:
+        """Validate that generated URL lands on an expected product page."""
+        if not affiliate_url:
+            return False, None
+
+        try:
+            parsed = urlparse(affiliate_url)
+            if parsed.netloc != "link.coupang.com":
+                logger.warning("Unexpected affiliate host: %s", parsed.netloc)
+                return False, None
+        except Exception:
+            return False, None
+
+        page = await self._context.new_page()
+        try:
+            await page.goto(affiliate_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+            await page.wait_for_timeout(1500)
+            final_url = page.url
+            resolved_pid = _extract_product_id_from_final_url(final_url)
+            if "coupang.com/vp/products/" not in final_url:
+                logger.warning("Affiliate redirect did not land on product page: %s", final_url[:100])
+                return False, resolved_pid
+
+            text = (await page.title() or "").lower()
+            try:
+                body = await page.text_content("body")
+                if body:
+                    text += " " + body.lower()
+            except Exception:
+                pass
+
+            if brand and brand.lower() not in text:
+                logger.warning("Brand token missing in landing page: brand=%s url=%s", brand, final_url[:100])
+                return False, resolved_pid
+
+            generic_tokens = {"청소기", "무선", "미니", "핸디", "차량용", "원룸", "자취방"}
+            tokens = [
+                t for t in re.findall(r"[A-Za-z0-9\uAC00-\uD7A3]+", product_name)
+                if len(t) >= 3 and t not in generic_tokens
+            ]
+            if tokens:
+                hits = sum(1 for t in tokens[:4] if t.lower() in text)
+                if hits == 0:
+                    logger.warning("No model tokens matched landing page: %s", final_url[:100])
+                    return False, resolved_pid
+
+            return True, resolved_pid
+        except Exception as e:
+            logger.warning("Affiliate target validation failed: %s", e)
+            return False, None
+        finally:
+            try:
+                await page.close()
+            except Exception:
+                pass
+
+
     # --- Batch Processing ---
 
     async def process_products(self, products: list[dict]) -> list[dict]:
@@ -862,6 +1050,7 @@ class CoupangLinkScraper:
             List of result dicts with product_id, name, url, success flag.
         """
         results = []
+        seen_product_ids: set[str] = set()
 
         for i, product in enumerate(products):
             name = product["name"]
@@ -871,8 +1060,16 @@ class CoupangLinkScraper:
                 "--- Product %d/%d: %s ---", i + 1, len(products), name[:50]
             )
 
-            url = await self.generate_link(name, target_price=price)
+            url = await self.generate_link(name, brand=brand, target_price=price)
             product_id = _make_product_id(name, brand)
+            resolved_pid = self._last_validated_product_id
+            duplicate_pid = bool(resolved_pid and resolved_pid in seen_product_ids)
+            if duplicate_pid:
+                logger.error(
+                    "Duplicate landing product detected (product_id=%s). Marking as failed.",
+                    resolved_pid,
+                )
+                url = None
 
             results.append({
                 "product_id": product_id,
@@ -880,8 +1077,12 @@ class CoupangLinkScraper:
                 "brand": brand,
                 "base_url": url or "",
                 "platform": "coupang",
+                "resolved_product_id": resolved_pid,
+                "error": "duplicate_landing_product" if duplicate_pid else "",
                 "success": url is not None,
             })
+            if url and resolved_pid:
+                seen_product_ids.add(resolved_pid)
 
             if i < len(products) - 1:
                 await self._page.wait_for_timeout(SETTLE_DELAY)
@@ -927,8 +1128,13 @@ def load_a0_products(a0_path: Path) -> tuple[str, list[dict]]:
     Returns:
         (category, final_products list)
     """
-    with open(a0_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    try:
+        with open(a0_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError:
+        # Some editors save UTF-8 with BOM; handle gracefully.
+        with open(a0_path, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
     category = data.get("category", "unknown")
     products = data.get("final_products", [])
     return category, products

@@ -46,12 +46,21 @@ class UploadResult:
     error: str = ""
 
 
+# Domain → Supabase environment variable mapping
+STORAGE_DOMAIN_ENV_MAP: dict[str, dict[str, str]] = {
+    "tech": {"url_env": "SUPABASE_URL", "key_env": "SUPABASE_SERVICE_KEY", "label": "TECH"},
+    "pet":  {"url_env": "SUPABASE_PET_URL", "key_env": "SUPABASE_PET_SERVICE_KEY", "label": "PET"},
+    "baby": {"url_env": "SUPABASE_BABY_URL", "key_env": "SUPABASE_BABY_SERVICE_KEY", "label": "BABY"},
+}
+
+
 class SupabaseStorage:
     """Upload images to Supabase Storage and retrieve public URLs.
 
-    Supports two Supabase projects (tech/pet) via domain-based routing:
+    Supports three Supabase projects (tech/pet/baby) via domain-based routing:
     - tech: SUPABASE_URL + SUPABASE_SERVICE_KEY
     - pet:  SUPABASE_PET_URL + SUPABASE_PET_SERVICE_KEY
+    - baby: SUPABASE_BABY_URL + SUPABASE_BABY_SERVICE_KEY
     """
 
     def __init__(
@@ -61,12 +70,9 @@ class SupabaseStorage:
         bucket: str = DEFAULT_BUCKET,
         domain: str = "tech",
     ):
-        if domain == "pet":
-            self._url = supabase_url or os.getenv("SUPABASE_PET_URL", "")
-            self._key = supabase_key or os.getenv("SUPABASE_PET_SERVICE_KEY", "")
-        else:
-            self._url = supabase_url or os.getenv("SUPABASE_URL", "")
-            self._key = supabase_key or os.getenv("SUPABASE_SERVICE_KEY", "")
+        env_cfg = STORAGE_DOMAIN_ENV_MAP.get(domain, STORAGE_DOMAIN_ENV_MAP["tech"])
+        self._url = supabase_url or os.getenv(env_cfg["url_env"], "")
+        self._key = supabase_key or os.getenv(env_cfg["key_env"], "")
         self._bucket = bucket
         self._domain = domain
         self._client = None
@@ -76,15 +82,10 @@ class SupabaseStorage:
         if self._client is not None:
             return self._client
         if not self._url or not self._key:
-            domain_label = "PET" if self._domain == "pet" else "TECH"
-            env_hint = (
-                "SUPABASE_PET_URL / SUPABASE_PET_SERVICE_KEY"
-                if self._domain == "pet"
-                else "SUPABASE_URL / SUPABASE_SERVICE_KEY"
-            )
+            env_cfg = STORAGE_DOMAIN_ENV_MAP.get(self._domain, STORAGE_DOMAIN_ENV_MAP["tech"])
             raise ValueError(
-                f"{domain_label} blog: {env_hint} must be set in .env. "
-                f"See config/.env.example."
+                f"{env_cfg['label']} blog: {env_cfg['url_env']} / {env_cfg['key_env']} "
+                f"must be set in .env. See config/.env.example."
             )
         from supabase import create_client
 

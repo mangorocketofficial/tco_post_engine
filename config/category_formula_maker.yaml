@@ -1,0 +1,34 @@
+# config/category_formula_maker.yaml
+
+name: "분유제조기"
+search_terms: ["분유제조기"]
+danawa_category_code: ""
+
+# 멀티 카테고리 설정
+tco_years: 1                              # 분유 수유 기간 (~12개월)
+domain: "baby"
+subscription_model: false
+multi_unit_label: null
+lock_in: true                              # 전용 깔때기/노즐 부품
+
+negative_keywords: ["불만", "후회", "실망", "반품", "고장", "AS", "수리", "오류"]
+positive_keywords: ["추천", "만족", "최고", "잘샀다", "좋아요", "강추"]
+
+price_range:
+  min: 0
+  max: 10000000
+
+max_product_age_months: 18
+min_community_posts: 20
+
+# A2 소모품 정보
+consumables:
+  tco_tier: "essential"
+  tco_label: "1년 필터·부품 포함 총비용"
+  items:
+    - name: "깔때기/노즐 세트(여분)"
+      cycle: "3~6개월"
+    - name: "정수필터(일부 모델)"
+      cycle: "2~3개월"
+    - name: "세척솔/소모성 세척용품"
+      cycle: "3~6개월"

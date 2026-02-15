@@ -283,6 +283,7 @@ class SelectionResult:
     candidate_pool_size: int
     selected_products: list[SelectedProduct]
     validation: list[ValidationResult]
+    runner_ups: list[SelectedProduct] = field(default_factory=list)  # 4위~6위 후보
 
     # Tier selection metadata
     selected_tier: str = ""  # "premium" | "mid" | "budget"
@@ -296,6 +297,7 @@ class SelectionResult:
             "data_sources": self.data_sources,
             "candidate_pool_size": self.candidate_pool_size,
             "selected_products": [sp.to_dict() for sp in self.selected_products],
+            "runner_ups": [sp.to_dict() for sp in self.runner_ups],
             "validation": {
                 v.check_name: f"{'PASS' if v.passed else 'FAIL'} — {v.detail}"
                 for v in self.validation
@@ -433,6 +435,7 @@ class FinalSelectionResult:
             "a0_summary": {
                 "candidate_pool_size": self.a0_result.candidate_pool_size,
                 "top_3": [sp.to_dict() for sp in self.a0_result.selected_products],
+                "runner_ups": [sp.to_dict() for sp in self.a0_result.runner_ups],
             },
         }
         if self.a0_result.selected_tier:

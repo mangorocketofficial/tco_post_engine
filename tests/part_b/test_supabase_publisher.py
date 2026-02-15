@@ -718,6 +718,37 @@ class TestPublishCategory:
         )
         assert summary.posts[0]["slug"] == "pet-water-fountain-best"
 
+    def test_baby_domain_uses_category_slug(self, tmp_path):
+        """Baby domain uses same category-based slug convention."""
+        baby_tco = {**SAMPLE_TCO_DATA, "domain": "baby", "tco_years": 2}
+        tco_path = tmp_path / "tco_baby.json"
+        tco_path.write_text(json.dumps(baby_tco), encoding="utf-8")
+        blog_path = tmp_path / "blog_baby.html"
+        blog_path.write_text(SAMPLE_BLOG_HTML, encoding="utf-8")
+
+        summary = self.publisher.publish_category(
+            tco_data_path=str(tco_path),
+            blog_html_path=str(blog_path),
+            publish=False,
+            category_slug="diaper-pail",
+        )
+        assert summary.posts[0]["slug"] == "diaper-pail-best"
+
+    def test_baby_domain_tag_in_comparison(self):
+        """Baby domain should include 육아용품 tag in comparison post."""
+        baby_tco = {**SAMPLE_TCO_DATA, "domain": "baby"}
+        pub = SupabasePublisher(supabase_url="http://test", supabase_key="key", domain="baby")
+        row = pub.build_comparison_post(baby_tco, SAMPLE_BLOG_HTML)
+        assert "육아용품" in row.tags
+
+    def test_baby_domain_tag_in_review(self):
+        """Baby domain should include 육아용품 tag in review post."""
+        baby_tco = {**SAMPLE_TCO_DATA, "domain": "baby"}
+        pub = SupabasePublisher(supabase_url="http://test", supabase_key="key", domain="baby")
+        product_data = baby_tco["products"][0]
+        row = pub.build_review_post(baby_tco, SAMPLE_REVIEW_HTML, product_data)
+        assert "육아용품" in row.tags
+
     @patch("src.part_b.publisher.supabase_publisher.SupabasePublisher._get_client")
     def test_update_existing_uses_upsert(self, mock_get_client, tmp_path):
         """--update-existing triggers upsert instead of insert."""
@@ -769,6 +800,20 @@ class TestSupabasePublisherInit:
         monkeypatch.delenv("NEXT_PUBLIC_SUPABASE_ANON_KEY", raising=False)
         pub = SupabasePublisher(supabase_url="", supabase_key="")
         with pytest.raises(ValueError, match="SUPABASE_URL"):
+            pub._get_client()
+
+    def test_init_baby_domain_from_env(self, monkeypatch):
+        monkeypatch.setenv("SUPABASE_BABY_URL", "http://baby-url")
+        monkeypatch.setenv("SUPABASE_BABY_SERVICE_KEY", "baby-key")
+        pub = SupabasePublisher(domain="baby")
+        assert pub._supabase_url == "http://baby-url"
+        assert pub._supabase_key == "baby-key"
+
+    def test_get_client_raises_baby_without_credentials(self, monkeypatch):
+        monkeypatch.delenv("SUPABASE_BABY_URL", raising=False)
+        monkeypatch.delenv("SUPABASE_BABY_SERVICE_KEY", raising=False)
+        pub = SupabasePublisher(supabase_url="", supabase_key="", domain="baby")
+        with pytest.raises(ValueError, match="SUPABASE_BABY_URL"):
             pub._get_client()
 
 

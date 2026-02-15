@@ -47,8 +47,8 @@ class TCOExporter:
             a2_path: A2 consumable data JSON.
             a5_path: A5 review insights JSON (optional).
             output_path: Output file path.
-            tco_years: TCO calculation period in years (default 3, pet=2).
-            domain: Blog domain — "tech" or "pet".
+            tco_years: TCO calculation period in years (default 3, pet=2, baby=1~3).
+            domain: Blog domain — "tech", "pet", or "baby".
 
         Returns:
             Complete export dict for Part B consumption.

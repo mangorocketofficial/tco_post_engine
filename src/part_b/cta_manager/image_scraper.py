@@ -690,7 +690,7 @@ def main():
         help="Process images and upload to Supabase Storage",
     )
     parser.add_argument(
-        "--domain", type=str, choices=["tech", "pet"], default="tech",
+        "--domain", type=str, choices=["tech", "pet", "baby"], default="tech",
         help="Blog domain for Supabase routing (default: tech)",
     )
     args = parser.parse_args()

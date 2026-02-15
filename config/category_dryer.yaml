@@ -1,0 +1,27 @@
+# config/category_dryer.yaml
+
+name: "건조기"
+search_terms: ["건조기"]
+danawa_category_code: ""
+
+# 멀티 카테고리 설정
+tco_years: 3
+domain: "tech"
+subscription_model: false
+multi_unit_label: null
+
+negative_keywords: ["불만", "후회", "실망", "반품", "고장", "AS", "수리", "오류", "소음", "냄새"]
+positive_keywords: ["추천", "만족", "최고", "잘샀다", "좋아요", "강추", "인생템"]
+
+price_range:
+  min: 500000
+  max: 10000000
+
+max_product_age_months: 18
+min_community_posts: 20
+
+# A2 소모품 정보 — 건조기는 교체 소모품 없음 (필터 청소만, 콘덴서 자동세척)
+consumables:
+  tco_tier: "none"
+  tco_label: "3년 총비용"
+  items: []

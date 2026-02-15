@@ -1,0 +1,25 @@
+name: "전자렌지"
+search_terms: ["전자렌지"]
+danawa_category_code: ""
+
+# 멀티 카테고리 설정
+tco_years: 3
+domain: "tech"
+subscription_model: false
+multi_unit_label: null
+
+negative_keywords: ["불만", "후회", "실망", "반품", "고장", "AS", "수리", "오류"]
+positive_keywords: ["추천", "만족", "최고", "잘샀다", "좋아요", "강추"]
+
+price_range:
+  min: 0
+  max: 10000000
+
+max_product_age_months: 18
+min_community_posts: 20
+
+# A2 소모품 정보
+consumables:
+  tco_tier: "none"
+  tco_label: "3년 실비용(구매가격+소모품비)"
+  items: []

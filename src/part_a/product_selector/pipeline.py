@@ -164,6 +164,54 @@ class ProductSelectionPipeline:
             tier_scores.get(winning_tier, 0.0),
         )
 
+        # Step 4.5: Build runner-ups (rank 4-6) for fallback pool
+        picked_names = {p.candidate.name for p in picks}
+        runner_ups: list[SelectedProduct] = []
+        adj_order = {
+            "premium": ["mid", "budget"],
+            "mid": ["premium", "budget"],
+            "budget": ["mid", "premium"],
+        }
+        search_tiers = [winning_tier] + adj_order.get(winning_tier, [])
+        for tier in search_tiers:
+            tier_candidates = sorted(
+                [c for c in candidates if tier_map.get(c.name) == tier],
+                key=lambda c: scores.get(
+                    c.name, ProductScores(product_name=c.name)
+                ).total_score,
+                reverse=True,
+            )
+            for c in tier_candidates:
+                if c.name in picked_names:
+                    continue
+                s = scores.get(c.name, ProductScores(product_name=c.name))
+                if s.total_score < 0.1:
+                    continue
+                runner_ups.append(SelectedProduct(
+                    rank=len(picks) + len(runner_ups) + 1,
+                    candidate=c,
+                    scores=s,
+                    selection_reasons=[f"Runner-up from tier '{tier}'"],
+                    slot="",
+                ))
+                if len(runner_ups) >= 3:
+                    break
+            if len(runner_ups) >= 3:
+                break
+
+        # Re-sort and re-rank runner-ups by score
+        runner_ups.sort(key=lambda x: x.scores.total_score, reverse=True)
+        for i, ru in enumerate(runner_ups):
+            ru.rank = len(picks) + i + 1
+
+        logger.info("Runner-ups: %d candidates", len(runner_ups))
+        for ru in runner_ups:
+            logger.info(
+                "  #%d: %s (%s) — score=%.3f",
+                ru.rank, ru.candidate.name, ru.candidate.brand,
+                ru.scores.total_score,
+            )
+
         # Step 5: Validate
         logger.info("Step 5: Validating...")
         validations = self._validate(picks, tier_map, winning_tier, tier_counts)
@@ -177,6 +225,7 @@ class ProductSelectionPipeline:
             },
             candidate_pool_size=len(candidates),
             selected_products=picks,
+            runner_ups=runner_ups,
             validation=validations,
             selected_tier=winning_tier,
             tier_scores=tier_scores,
